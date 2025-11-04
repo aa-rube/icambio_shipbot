@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from aiogram import Bot
 from db.mongo import get_db, init_indexes
 from db.redis_client import get_redis
-from db.models import IncomingOrder, utcnow_iso
+from db.models import IncomingOrder, UpdateOrder, utcnow_iso
 from keyboards.orders_kb import new_order_kb
 from utils.logger import setup_logging
 from config import BOT_TOKEN, API_HOST, API_PORT
@@ -43,6 +43,9 @@ async def create_order(payload: IncomingOrder):
         "external_id": payload.external_id,
         "assigned_to": courier["_id"],
         "status": "waiting",
+        "payment_status": payload.payment_status,
+        "delivery_time": payload.delivery_time,
+        "priority": payload.priority,
         "created_at": utcnow_iso(),
         "updated_at": utcnow_iso(),
         "client": {
@@ -85,6 +88,35 @@ async def create_order(payload: IncomingOrder):
             pass
 
     return JSONResponse({"ok": True, "order_id": str(order_doc["_id"]), "external_id": payload.external_id})
+
+@app.patch("/api/orders/{external_id}")
+async def update_order(external_id: str, payload: UpdateOrder):
+    import logging
+    logger = logging.getLogger(__name__)
+    db = await get_db()
+    
+    order = await db.orders.find_one({"external_id": external_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    update_data = {"updated_at": utcnow_iso()}
+    if payload.payment_status is not None:
+        update_data["payment_status"] = payload.payment_status
+    if payload.delivery_time is not None:
+        update_data["delivery_time"] = payload.delivery_time
+    if payload.priority is not None:
+        update_data["priority"] = payload.priority
+    if payload.address is not None:
+        update_data["address"] = payload.address
+    if payload.map_url is not None:
+        update_data["map_url"] = payload.map_url
+    if payload.notes is not None:
+        update_data["notes"] = payload.notes
+    
+    await db.orders.update_one({"external_id": external_id}, {"$set": update_data})
+    logger.info(f"Order {external_id} updated: {update_data}")
+    
+    return JSONResponse({"ok": True, "external_id": external_id})
 
 if __name__ == "__main__":
     uvicorn.run("api_server:app", host=API_HOST, port=API_PORT, reload=False)

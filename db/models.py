@@ -13,12 +13,24 @@ class IncomingOrder(BaseModel):
     notes: Optional[str] = None
     client_tg: Optional[str] = None
     contact_url: Optional[str] = None
+    payment_status: str = Field(default="NOT_PAID", description="NOT_PAID, PAID, REFUND")
+    delivery_time: Optional[str] = None
+    priority: int = Field(default=0, description="Приоритет заказа")
+
+class UpdateOrder(BaseModel):
+    payment_status: Optional[str] = None
+    delivery_time: Optional[str] = None
+    priority: Optional[int] = None
+    address: Optional[str] = None
+    map_url: Optional[str] = None
+    notes: Optional[str] = None
 
 # Helpers
 def utcnow_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 ORDER_STATUSES = ("waiting", "in_transit", "done", "cancelled")
+PAYMENT_STATUSES = ("NOT_PAID", "PAID", "REFUND")
 
 # Action types
 ACTION_TYPES = (
