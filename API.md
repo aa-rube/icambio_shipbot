@@ -15,7 +15,7 @@ http://127.0.0.1:5055
 **Request Body:**
 ```json
 {
-  "courier_name": "Иван Иванов",
+  "tg_chat_id": 7960182194,
   "external_id": "ORDER123",
   "client_name": "Петр Петров",
   "client_phone": "+79991234567",
@@ -31,7 +31,7 @@ http://127.0.0.1:5055
 ```
 
 **Required fields:**
-- `courier_name` - имя курьера или его tg_chat_id (если число)
+- `tg_chat_id` - Telegram chat ID курьера (число)
 - `external_id` - уникальный ID заказа из внешней системы
 - `client_name` - имя клиента
 - `client_phone` - телефон клиента
@@ -55,22 +55,9 @@ http://127.0.0.1:5055
 }
 ```
 
-**cURL Example:**
+**cURL Example (Git Bash/Windows):**
 ```bash
-curl -X POST http://127.0.0.1:5055/api/orders \
-  -H "Content-Type: application/json" \
-  -d '{
-    "courier_name": "7960182194",
-    "external_id": "TEST001",
-    "client_name": "Тестовый Клиент",
-    "client_phone": "+79991234567",
-    "address": "Москва, ул. Тверская, д. 1",
-    "map_url": "https://maps.google.com/?q=55.7558,37.6173",
-    "notes": "Позвонить за 10 минут",
-    "payment_status": "NOT_PAID",
-    "delivery_time": "15:30",
-    "priority": 2
-  }'
+curl -X POST http://127.0.0.1:5055/api/orders -H "Content-Type: application/json" -d "{\"tg_chat_id\":7960182194,\"external_id\":\"TEST001\",\"client_name\":\"Тестовый Клиент\",\"client_phone\":\"+79991234567\",\"address\":\"Москва, ул. Тверская, д. 1\",\"map_url\":\"https://maps.google.com/?q=55.7558,37.6173\",\"notes\":\"Позвонить за 10 минут\",\"payment_status\":\"NOT_PAID\",\"delivery_time\":\"15:30\",\"priority\":2}"
 ```
 
 ---
@@ -100,44 +87,26 @@ curl -X POST http://127.0.0.1:5055/api/orders \
 }
 ```
 
-**cURL Examples:**
+**cURL Examples (Git Bash/Windows):**
 
 Обновить статус оплаты:
 ```bash
-curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payment_status": "PAID"
-  }'
+curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 -H "Content-Type: application/json" -d "{\"payment_status\":\"PAID\"}"
 ```
 
 Обновить приоритет и время доставки:
 ```bash
-curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "priority": 5,
-    "delivery_time": "18:00"
-  }'
+curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 -H "Content-Type: application/json" -d "{\"priority\":5,\"delivery_time\":\"18:00\"}"
 ```
 
 Обновить адрес и примечания:
 ```bash
-curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "address": "Москва, ул. Арбат, д. 10",
-    "notes": "Новые инструкции для курьера"
-  }'
+curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 -H "Content-Type: application/json" -d "{\"address\":\"Москва, ул. Арбат, д. 10\",\"notes\":\"Новые инструкции для курьера\"}"
 ```
 
 Установить возврат:
 ```bash
-curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payment_status": "REFUND"
-  }'
+curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 -H "Content-Type: application/json" -d "{\"payment_status\":\"REFUND\"}"
 ```
 
 ---
@@ -277,33 +246,29 @@ python bot.py
 
 3. **Создать заказ через API:**
    ```bash
-   curl -X POST http://127.0.0.1:5055/api/orders \
-     -H "Content-Type: application/json" \
-     -d '{"courier_name":"7960182194","external_id":"TEST001","client_name":"Клиент","client_phone":"+79991234567","address":"Адрес"}'
+   curl -X POST http://127.0.0.1:5055/api/orders -H "Content-Type: application/json" -d "{\"tg_chat_id\":7960182194,\"external_id\":\"TEST001\",\"client_name\":\"Клиент\",\"client_phone\":\"+79991234567\",\"address\":\"Адрес\"}"
    ```
 
 4. **Курьер получает уведомление и обрабатывает заказ**
 
 5. **Обновить статус оплаты:**
    ```bash
-   curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 \
-     -H "Content-Type: application/json" \
-     -d '{"payment_status":"PAID"}'
+   curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 -H "Content-Type: application/json" -d "{\"payment_status\":\"PAID\"}"
    ```
 
 ### Quick Test Commands
 
 Создать тестовый заказ:
 ```bash
-curl -X POST http://127.0.0.1:5055/api/orders -H "Content-Type: application/json" -d '{"courier_name":"7960182194","external_id":"TEST001","client_name":"Test","client_phone":"+79991234567","address":"Test Address","payment_status":"NOT_PAID","priority":1}'
+curl -X POST http://127.0.0.1:5055/api/orders -H "Content-Type: application/json" -d "{\"tg_chat_id\":7960182194,\"external_id\":\"TEST001\",\"client_name\":\"Test\",\"client_phone\":\"+79991234567\",\"address\":\"Test Address\",\"payment_status\":\"NOT_PAID\",\"priority\":1}"
 ```
 
 Обновить на PAID:
 ```bash
-curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 -H "Content-Type: application/json" -d '{"payment_status":"PAID"}'
+curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 -H "Content-Type: application/json" -d "{\"payment_status\":\"PAID\"}"
 ```
 
 Установить возврат:
 ```bash
-curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 -H "Content-Type: application/json" -d '{"payment_status":"REFUND"}'
+curl -X PATCH http://127.0.0.1:5055/api/orders/TEST001 -H "Content-Type: application/json" -d "{\"payment_status\":\"REFUND\"}"
 ```
