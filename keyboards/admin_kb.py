@@ -2,8 +2,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 
 def admin_main_kb() -> InlineKeyboardMarkup:
     kb = [
-        [InlineKeyboardButton(text="➕ Добавить пользователя", callback_data="admin:add_user")],
-        [InlineKeyboardButton(text="➖ Удалить пользователя", callback_data="admin:del_user")],
+        [InlineKeyboardButton(text="➕ Добавить курьера", callback_data="admin:add_user")],
+        [InlineKeyboardButton(text="➖ Удалить курьера", callback_data="admin:del_user")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin:broadcast")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)

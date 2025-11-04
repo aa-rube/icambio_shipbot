@@ -60,7 +60,7 @@ async def cb_add_user(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_user_id)
     logger.info(f"State set to waiting_user_id for {call.from_user.id}")
     
-    await call.message.edit_text("➕ Добавление пользователя", reply_markup=back_to_admin_kb())
+    await call.message.edit_text("➕ Добавление курьера", reply_markup=back_to_admin_kb())
     await call.message.answer("Выбери пользователя из контактов:", reply_markup=request_user_kb())
     await call.answer()
 
@@ -88,7 +88,7 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
     existing = await db.couriers.find_one({"tg_chat_id": user_id})
     if existing:
         logger.info(f"User {user_id} already exists, skipping add")
-        await message.answer(f"ℹ️ Пользователь {user_id} уже существует")
+        await message.answer(f"ℹ️ Курьер {user_id} уже существует")
         await state.clear()
         return
     
