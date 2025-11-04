@@ -4,15 +4,18 @@ from datetime import datetime
 
 # --- Pydantic schemas for FastAPI input ---
 class IncomingOrder(BaseModel):
-    tg_chat_id: int = Field(..., description="Telegram chat ID курьера")
+    courier_tg_chat_id: int = Field(..., description="Telegram chat ID курьера")
     external_id: str = Field(..., description="Внешний номер заказа — присваивается внешней системой")
     client_name: str
     client_phone: str
+    client_chat_id: Optional[int] = None
+    client_tg: Optional[str] = None
+    contact_url: Optional[str] = None
     address: str
     map_url: Optional[str] = None
     notes: Optional[str] = None
-    client_tg: Optional[str] = None
-    contact_url: Optional[str] = None
+    brand: Optional[str] = None
+    source: Optional[str] = None
     payment_status: str = Field(default="NOT_PAID", description="NOT_PAID, PAID, REFUND")
     delivery_time: Optional[str] = None
     priority: int = Field(default=0, description="Приоритет заказа")

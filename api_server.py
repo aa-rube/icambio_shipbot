@@ -26,27 +26,31 @@ async def create_order(payload: IncomingOrder):
     redis = get_redis()
 
     # Find courier by tg_chat_id
-    courier = await db.couriers.find_one({"tg_chat_id": payload.tg_chat_id})
+    courier = await db.couriers.find_one({"tg_chat_id": payload.courier_tg_chat_id})
     if not courier:
-        logger.warning(f"Courier not found: {payload.tg_chat_id}")
+        logger.warning(f"Courier not found: {payload.courier_tg_chat_id}")
         raise HTTPException(status_code=404, detail="Courier not found")
 
     # Ensure external order id uniqueness (also enforced by unique index)
-    if await db.orders.find_one({"external_id": payload.external_id}):
+    if await db.couriers_deliveries.find_one({"external_id": payload.external_id}):
         raise HTTPException(status_code=409, detail="Order with this external_id already exists")
 
     order_doc = {
         "external_id": payload.external_id,
+        "courier_tg_chat_id": payload.courier_tg_chat_id,
         "assigned_to": courier["_id"],
         "status": "waiting",
         "payment_status": payload.payment_status,
         "delivery_time": payload.delivery_time,
         "priority": payload.priority,
+        "brand": payload.brand,
+        "source": payload.source,
         "created_at": utcnow_iso(),
         "updated_at": utcnow_iso(),
         "client": {
             "name": payload.client_name,
             "phone": payload.client_phone,
+            "chat_id": payload.client_chat_id,
             "tg": payload.client_tg,
             "contact_url": payload.contact_url,
         },
@@ -55,32 +59,49 @@ async def create_order(payload: IncomingOrder):
         "notes": payload.notes,
         "photos": [],
     }
-    res = await db.orders.insert_one(order_doc)
+    res = await db.couriers_deliveries.insert_one(order_doc)
     order_doc["_id"] = res.inserted_id
 
     # If courier on shift -> push Telegram message
     is_on = await redis.get(f"courier:shift:{courier['tg_chat_id']}")
     if is_on == "on":
-        text = (
-            "📦 Новый заказ\n"
-            f"Номер: {payload.external_id}\n"
-            f"Клиент: {payload.client_name}\n"
-            f"Телефон: {payload.client_phone}\n"
-            f"Адрес: {payload.address}\n"
-        )
+        priority_emoji = "🔴" if payload.priority >= 5 else "🟡" if payload.priority >= 3 else "⚪"
+        
+        text = f"⏳ Статус: Ожидает\n\n"
+        text += f"<code>{payload.address}</code>\n\n"
+        
         if payload.map_url:
-            text += f"Карта: {payload.map_url}\n"
+            text += f"🗺 <a href='{payload.map_url}'>Карта</a>\n\n"
+        
+        text += f"💳 {payload.payment_status} | {priority_emoji} Приоритет: {payload.priority}\n"
+        
+        if payload.delivery_time:
+            text += f"⏰ {payload.delivery_time}\n"
+        
+        text += f"👤 {payload.client_name} | 📞 {payload.client_phone}\n"
+        
+        if payload.client_tg:
+            text += f"@{payload.client_tg.lstrip('@')}\n"
+        
         if payload.notes:
-            text += f"Примечание: {payload.notes}\n"
+            text += f"\n📝 {payload.notes}\n"
+        
+        if payload.brand or payload.source:
+            text += "\n"
+            if payload.brand:
+                text += f"🏷 {payload.brand}"
+            if payload.source:
+                text += f" | 📊 {payload.source}"
 
         try:
             await bot.send_message(
                 courier["tg_chat_id"],
                 text,
+                parse_mode="HTML",
                 reply_markup=new_order_kb(payload.external_id)
             )
         except Exception as e:
-            # log and continue; API should still return success
+            logger.error(f"Failed to send message: {e}")
             pass
 
     return JSONResponse({"ok": True, "order_id": str(order_doc["_id"]), "external_id": payload.external_id})
@@ -91,7 +112,7 @@ async def update_order(external_id: str, payload: UpdateOrder):
     logger = logging.getLogger(__name__)
     db = await get_db()
     
-    order = await db.orders.find_one({"external_id": external_id})
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     
@@ -109,7 +130,7 @@ async def update_order(external_id: str, payload: UpdateOrder):
     if payload.notes is not None:
         update_data["notes"] = payload.notes
     
-    await db.orders.update_one({"external_id": external_id}, {"$set": update_data})
+    await db.couriers_deliveries.update_one({"external_id": external_id}, {"$set": update_data})
     logger.info(f"Order {external_id} updated: {update_data}")
     
     return JSONResponse({"ok": True, "external_id": external_id})

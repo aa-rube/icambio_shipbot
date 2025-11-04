@@ -16,11 +16,11 @@ async def init_indexes():
     # Couriers
     await db.couriers.create_index([("tg_chat_id", ASCENDING)], unique=True)
     await db.couriers.create_index([("name", ASCENDING)])
-    # Orders
-    await db.orders.create_index([("external_id", ASCENDING)], unique=True)
-    await db.orders.create_index([("assigned_to", ASCENDING)])
-    await db.orders.create_index([("status", ASCENDING)])
-    await db.orders.create_index([("created_at", ASCENDING)])
+    # Couriers Deliveries
+    await db.couriers_deliveries.create_index([("external_id", ASCENDING)], unique=True)
+    await db.couriers_deliveries.create_index([("assigned_to", ASCENDING)])
+    await db.couriers_deliveries.create_index([("status", ASCENDING)])
+    await db.couriers_deliveries.create_index([("created_at", ASCENDING)])
     # Actions
     await db.actions.create_index([("user_id", ASCENDING)])
     await db.actions.create_index([("action_type", ASCENDING)])
