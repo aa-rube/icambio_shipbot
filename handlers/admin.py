@@ -117,7 +117,7 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
     logger.info(f"Admin {message.from_user.id} added user {user_id} ({full_name})")
     
     await message.answer(
-        f"✅ Пользователь добавлен\n"
+        f"✅ Курьер добавлен\n"
         f"ID: {user_id}\n"
         f"Имя: {full_name}\n"
         f"Username: @{username}" if username else ""
