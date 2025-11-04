@@ -124,6 +124,15 @@ async def cb_end_shift(call: CallbackQuery, bot: Bot):
     if not courier:
         await call.answer("Пользователь не найден", show_alert=True)
         return
+    
+    # Check for unfinished orders
+    unfinished = await db.couriers_deliveries.count_documents({
+        "courier_tg_chat_id": chat_id,
+        "status": {"$in": ["waiting", "in_transit"]}
+    })
+    if unfinished > 0:
+        await call.answer(f"Нельзя завершить смену! У вас {unfinished} незавершенных заказов", show_alert=True)
+        return
 
     await db.couriers.update_one({"_id": courier["_id"]}, {"$set": {"is_on_shift": False}, "$unset": {"current_shift_id": ""}})
     await redis.delete(f"courier:shift:{chat_id}")

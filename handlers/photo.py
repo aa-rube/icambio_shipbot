@@ -25,7 +25,7 @@ async def handle_photo(message: Message, bot: Bot):
     photo = message.photo[-1]  # largest size
     file_id = photo.file_id
 
-    await db.orders.update_one(
+    await db.couriers_deliveries.update_one(
         {"external_id": external_id},
         {
             "$set": {"status": "done", "updated_at": utcnow_iso()},

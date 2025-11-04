@@ -1,58 +1,77 @@
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from db.mongo import get_db
 from db.redis_client import get_redis
 from keyboards.orders_kb import new_order_kb, in_transit_kb
+from keyboards.main_menu import main_menu
 from utils.notifications import notify_manager
 from config import ORDER_LOCK_TTL, PHOTO_WAIT_TTL
 from db.models import utcnow_iso
+from datetime import datetime, timezone
 
 router = Router()
 
 def format_order_text(order: dict) -> str:
-    lines = [
-        "📦 Новый заказ" if order["status"] == "waiting" else "🚗 В пути",
-        f"Номер: {order.get('external_id','—')}",
-        f"Клиент: {order.get('client',{}).get('name','—')}",
-        f"Телефон: {order.get('client',{}).get('phone','—')}",
-        f"Адрес: {order.get('address','—')}",
-    ]
+    """Unified order formatting for all messages"""
+    status_emoji = {"waiting": "⏳", "in_transit": "🚗", "done": "✅", "cancelled": "❌"}
+    status_text = {"waiting": "Ожидает", "in_transit": "В пути", "done": "Выполнен", "cancelled": "Отменен"}
+    priority_emoji = "🔴" if order.get("priority", 0) >= 5 else "🟡" if order.get("priority", 0) >= 3 else "⚪"
+    
+    text = f"{status_emoji.get(order['status'], '⏳')} Статус: {status_text.get(order['status'], 'Ожидает')}\n\n"
+    text += f"<code>{order.get('address', '—')}</code>\n\n"
+    
     if order.get("map_url"):
-        lines.append(f"Карта: {order['map_url']}")
+        text += f"🗺 <a href='{order['map_url']}'>Карта</a>\n\n"
+    
+    text += f"💳 {order.get('payment_status', 'NOT_PAID')} | {priority_emoji} Приоритет: {order.get('priority', 0)}\n"
+    
+    if order.get("delivery_time"):
+        text += f"⏰ {order['delivery_time']}\n"
+    
+    client = order.get('client', {})
+    text += f"👤 {client.get('name', '—')} | 📞 {client.get('phone', '—')}\n"
+    
+    if client.get('tg'):
+        text += f"@{client['tg'].lstrip('@')}\n"
+    
     if order.get("notes"):
-        lines.append(f"Примечание: {order['notes']}")
-    return "\n".join(lines)
+        text += f"\n📝 {order['notes']}\n"
+    
+    if order.get("brand") or order.get("source"):
+        text += "\n"
+        if order.get("brand"):
+            text += f"🏷 {order['brand']}"
+        if order.get("source"):
+            text += f" | 📊 {order['source']}"
+    
+    return text
+
+@router.message(F.text == "/orders")
+async def cmd_orders(message: Message):
+    await show_active_orders(message.chat.id, message)
 
 @router.callback_query(F.data == "orders:list")
 async def cb_my_orders(call: CallbackQuery):
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"User {call.from_user.id} viewing orders")
-    
-    db = await get_db()
-    courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
-    if not courier:
-        await call.answer("Пользователь не найден", show_alert=True)
-        return
-    
-    from db.models import Action
-    await Action.log(db, call.from_user.id, "order_viewed")
+    await show_active_orders(call.message.chat.id, call.message)
     await call.answer()
-    
-    cursor = db.orders.find({
-        "assigned_to": courier["_id"],
+
+async def show_active_orders(chat_id: int, message: Message):
+    db = await get_db()
+    cursor = db.couriers_deliveries.find({
+        "courier_tg_chat_id": chat_id,
         "status": {"$in": ["waiting", "in_transit"]}
-    }).sort("created_at", 1)
+    }).sort("priority", -1).sort("created_at", 1)
+    
     found = False
     async for order in cursor:
         found = True
         text = format_order_text(order)
         if order["status"] == "waiting":
-            await call.message.answer(text, reply_markup=new_order_kb(order["external_id"]))
+            await message.answer(text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
         elif order["status"] == "in_transit":
-            await call.message.answer(text, reply_markup=in_transit_kb(order["external_id"]))
+            await message.answer(text, parse_mode="HTML", reply_markup=in_transit_kb(order["external_id"]))
     if not found:
-        await call.message.answer("Нет активных заказов.")
+        await message.answer("Нет активных заказов.")
 
 @router.callback_query(F.data.startswith("order:go:"))
 async def cb_order_go(call: CallbackQuery, bot: Bot):
@@ -63,7 +82,7 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
     
     db = await get_db()
     redis = get_redis()
-    order = await db.orders.find_one({"external_id": external_id})
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
     if not order:
         logger.warning(f"Order {external_id} not found")
         await call.answer("Заказ не найден", show_alert=True)
@@ -76,14 +95,14 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
         await call.answer("Кто-то уже обрабатывает этот заказ", show_alert=True)
         return
 
-    await db.orders.update_one({"_id": order["_id"]}, {"$set": {"status": "in_transit", "updated_at": utcnow_iso()}})
-    order = await db.orders.find_one({"_id": order["_id"]})
+    await db.couriers_deliveries.update_one({"_id": order["_id"]}, {"$set": {"status": "in_transit", "updated_at": utcnow_iso()}})
+    order = await db.couriers_deliveries.find_one({"_id": order["_id"]})
     
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_accepted", order_id=external_id)
     logger.info(f"User {call.from_user.id} accepted order {external_id}")
     
-    await call.message.edit_text(format_order_text(order), reply_markup=in_transit_kb(external_id))
+    await call.message.edit_text(format_order_text(order), parse_mode="HTML", reply_markup=in_transit_kb(external_id))
     await call.answer("Статус: в пути")
 
 @router.callback_query(F.data.startswith("order:later:"))
@@ -92,7 +111,8 @@ async def cb_order_later(call: CallbackQuery):
     db = await get_db()
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_postponed", order_id=external_id)
-    await call.answer("Ок, напомню позже")
+    await call.message.delete()
+    await call.answer()
 
 @router.callback_query(F.data.startswith("order:done:"))
 async def cb_order_done(call: CallbackQuery):
@@ -118,6 +138,9 @@ async def cb_order_problem(call: CallbackQuery):
     external_id = call.data.split(":", 2)[2]
     logger.info(f"User {call.from_user.id} reported problem with order {external_id}")
     
+    redis = get_redis()
+    await redis.setex(f"courier:problem_wait:{call.message.chat.id}", PHOTO_WAIT_TTL, external_id)
+    
     db = await get_db()
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_problem", order_id=external_id)
@@ -125,19 +148,140 @@ async def cb_order_problem(call: CallbackQuery):
     await call.message.answer(f"⚠ Опиши коротко проблему по заказу {external_id}, чтобы менеджер помог")
     await call.answer()
 
+@router.message(F.text == "/history_today")
+async def cmd_history_today(message: Message):
+    db = await get_db()
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + "Z"
+    
+    cursor = db.couriers_deliveries.find({
+        "courier_tg_chat_id": message.chat.id,
+        "created_at": {"$gte": today_start}
+    }).sort("created_at", -1)
+    
+    found = False
+    async for order in cursor:
+        found = True
+        text = format_order_text(order)
+        if order["status"] in ["waiting", "in_transit"]:
+            kb = new_order_kb(order["external_id"]) if order["status"] == "waiting" else in_transit_kb(order["external_id"])
+            await message.answer(text, parse_mode="HTML", reply_markup=kb)
+        else:
+            await message.answer(text, parse_mode="HTML")
+    
+    if not found:
+        await message.answer("Сегодня заказов не было.")
+
+@router.message(F.text == "/history_all")
+async def cmd_history_all(message: Message):
+    await show_history_page(message, 0)
+
+@router.callback_query(F.data.startswith("history:page:"))
+async def cb_history_page(call: CallbackQuery):
+    page = int(call.data.split(":")[2])
+    await show_history_page(call.message, page)
+    await call.answer()
+
+async def show_history_page(message: Message, page: int):
+    db = await get_db()
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + "Z"
+    
+    skip = page * 30
+    cursor = db.couriers_deliveries.find({
+        "courier_tg_chat_id": message.chat.id,
+        "created_at": {"$lt": today_start}
+    }).sort("created_at", -1).skip(skip).limit(30)
+    
+    orders = await cursor.to_list(length=30)
+    
+    if not orders:
+        if page == 0:
+            await message.answer("История заказов пуста.")
+        else:
+            await message.answer("Больше заказов нет.")
+        return
+    
+    for order in orders:
+        text = format_order_text(order)
+        await message.answer(text, parse_mode="HTML")
+    
+    # Last message with buttons
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Еще", callback_data=f"history:page:{page + 1}")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]
+    ])
+    await message.answer(f"Показано {len(orders)} заказов (страница {page + 1})", reply_markup=kb)
+
+@router.callback_query(F.data == "main_menu")
+async def cb_main_menu(call: CallbackQuery):
+    db = await get_db()
+    courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
+    is_on_shift = courier.get("is_on_shift", False) if courier else False
+    await call.message.answer("Главное меню:", reply_markup=main_menu(is_on_shift))
+    await call.answer()
+
 @router.message(F.text & ~F.via_bot & ~F.forward_from_chat)
 async def catch_problem_text(message: Message, bot: Bot):
-    # if message is plain text right after "Проблема", forward to manager
+    redis = get_redis()
+    external_id = await redis.get(f"courier:problem_wait:{message.chat.id}")
+    
+    if not external_id:
+        return
+    
     db = await get_db()
     courier = await db.couriers.find_one({"tg_chat_id": message.chat.id})
     if not courier:
         return
-    # Heuristic: if there's any active in_transit order, treat text as a problem (better UX would use FSM)
-    order = await db.orders.find_one({"assigned_to": courier["_id"], "status": "in_transit"}, sort=[("updated_at", -1)])
-    if order:
-        msg = (
-            f"🚨 Проблема с заказом {order['external_id']}\n"
-            f"Курьер: {courier['name']}\n"
-            f"Сообщение: \"{message.text}\""
-        )
-        await notify_manager(bot, courier, msg)
+    
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    if not order:
+        await message.answer("Заказ не найден")
+        return
+    
+    # Save message to order history
+    timestamp = utcnow_iso()
+    problem_entry = {
+        f"courier-{timestamp}": message.text
+    }
+    
+    await db.couriers_deliveries.update_one(
+        {"external_id": external_id},
+        {
+            "$push": {"problem_messages": problem_entry},
+            "$set": {"updated_at": timestamp}
+        }
+    )
+    
+    await redis.delete(f"courier:problem_wait:{message.chat.id}")
+    
+    # Notify manager with full info
+    client = order.get('client', {})
+    msg = (
+        f"💬 ПРОБЛЕМА:\n\"{message.text}\"\n\n"
+        f"📝 Заказ: {external_id}\n"
+        f"🚚 Курьер: {courier['name']}\n\n"
+        f"👤 Клиент: {client.get('name', '—')}\n"
+        f"📞 Телефон: {client.get('phone', '—')}\n"
+    )
+    
+    if client.get('tg'):
+        msg += f"👤 Telegram: {client['tg']}\n"
+    
+    msg += f"\n📍 Адрес: {order.get('address', '—')}\n"
+    
+    if order.get('map_url'):
+        msg += f"🗺 Карта: {order['map_url']}\n"
+    
+    if order.get('notes'):
+        msg += f"\n📝 Примечания: {order['notes']}\n"
+    
+    if order.get('brand'):
+        msg += f"\n🏷 Бренд: {order['brand']}\n"
+    
+    if order.get('source'):
+        msg += f"📊 Источник: {order['source']}\n"
+    
+    await notify_manager(bot, courier, msg)
+    
+    await message.answer("✅ Сообщение отправлено менеджеру")
