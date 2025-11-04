@@ -1,7 +1,8 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
-from handlers import start, shift, orders, photo, errors
+from aiogram.fsm.storage.memory import MemoryStorage
+from handlers import start, shift, orders, photo, errors, admin, location
 from utils.logger import setup_logging
 from db.mongo import init_indexes
 from config import BOT_TOKEN
@@ -11,9 +12,12 @@ async def main():
     await init_indexes()
 
     bot = Bot(BOT_TOKEN)
-    dp = Dispatcher()
+    storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
+    dp.include_router(admin.router)
     dp.include_router(start.router)
     dp.include_router(shift.router)
+    dp.include_router(location.router)
     dp.include_router(orders.router)
     dp.include_router(photo.router)
     dp.include_router(errors.router)

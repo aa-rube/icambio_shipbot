@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Telegram Bot
 BOT_TOKEN = os.getenv("BOT_TOKEN", "PUT_YOUR_TELEGRAM_BOT_TOKEN_HERE")
@@ -19,3 +22,4 @@ SHIFT_TTL = int(os.getenv("SHIFT_TTL", str(12 * 60 * 60)))        # 12 hours
 LOC_TTL   = int(os.getenv("LOC_TTL",   str(12 * 60 * 60)))        # 12 hours
 PHOTO_WAIT_TTL = int(os.getenv("PHOTO_WAIT_TTL", str(10 * 60)))   # 10 minutes
 ORDER_LOCK_TTL = int(os.getenv("ORDER_LOCK_TTL", str(30)))        # 30 seconds
+LIVE_LOCATION_DURATION = int(os.getenv("LIVE_LOCATION_DURATION", str(8 * 60 * 60)))  # 8 hours

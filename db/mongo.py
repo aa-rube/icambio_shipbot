@@ -1,6 +1,6 @@
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from pymongo import ASCENDING
+from pymongo import ASCENDING, DESCENDING
 from config import MONGO_URI, MONGO_DB_NAME
 
 _client: Optional[AsyncIOMotorClient] = None
@@ -21,3 +21,12 @@ async def init_indexes():
     await db.orders.create_index([("assigned_to", ASCENDING)])
     await db.orders.create_index([("status", ASCENDING)])
     await db.orders.create_index([("created_at", ASCENDING)])
+    # Actions
+    await db.actions.create_index([("user_id", ASCENDING)])
+    await db.actions.create_index([("action_type", ASCENDING)])
+    await db.actions.create_index([("timestamp", ASCENDING)])
+    await db.actions.create_index([("order_id", ASCENDING)])
+    # Locations
+    await db.locations.create_index([("chat_id", ASCENDING), ("date", ASCENDING), ("shift_id", ASCENDING)])
+    await db.locations.create_index([("timestamp_ns", DESCENDING)])
+    await db.locations.create_index([("shift_id", ASCENDING)])

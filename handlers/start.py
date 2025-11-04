@@ -14,6 +14,7 @@ async def _ensure_courier(db, chat_id: int, tg_user) -> dict:
         name = name.strip() or tg_user.username or f"courier_{chat_id}"
         courier = {
             "name": name,
+            "username": tg_user.username,
             "tg_chat_id": chat_id,
             "manager_chat_id": None,
             "is_on_shift": False,
@@ -27,8 +28,19 @@ async def _ensure_courier(db, chat_id: int, tg_user) -> dict:
 @router.message(F.text == "/start")
 @router.message(F.text == "start")
 async def cmd_start(message: Message):
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"User {message.from_user.id} started bot")
+    
     db = await get_db()
-    courier = await _ensure_courier(db, message.chat.id, message.from_user)
+    courier = await db.couriers.find_one({"tg_chat_id": message.chat.id})
+    
+    if not courier:
+        logger.warning(f"User {message.from_user.id} not found in couriers, ignoring /start")
+        return
+    
+    from db.models import Action
+    await Action.log(db, message.from_user.id, "user_start")
 
     # stats
     now = datetime.now(timezone.utc)
@@ -49,13 +61,9 @@ async def cmd_start(message: Message):
     })
 
     text = (
-        f"Привет, {courier['name']}!
-
-"
-        f"🚚 Заказов в этом месяце: {monthly}
-"
-        f"📅 Сегодня: {today}
-"
+        f"Привет, {courier['name']}!\n\n"
+        f"🚚 Заказов в этом месяце: {monthly}\n"
+        f"📅 Сегодня: {today}\n"
         f"📦 Активные: {active}"
     )
     await message.answer(text, reply_markup=main_menu())

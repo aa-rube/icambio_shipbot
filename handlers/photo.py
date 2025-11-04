@@ -9,11 +9,16 @@ router = Router()
 
 @router.message(F.photo)
 async def handle_photo(message: Message, bot: Bot):
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"User {message.from_user.id} sent photo")
+    
     redis = get_redis()
     db = await get_db()
     chat_id = message.chat.id
     external_id = await redis.get(f"courier:photo_wait:{chat_id}")
     if not external_id:
+        logger.warning(f"User {message.from_user.id} sent photo without order context")
         await message.answer("Фото не ожидается. Сначала нажми «Заказ выполнен».")
         return
 
@@ -28,6 +33,10 @@ async def handle_photo(message: Message, bot: Bot):
         }
     )
     await redis.delete(f"courier:photo_wait:{chat_id}")
+
+    from db.models import Action
+    await Action.log(db, message.from_user.id, "photo_sent", order_id=external_id, details={"file_id": file_id})
+    logger.info(f"User {message.from_user.id} completed order {external_id} with photo")
 
     await message.answer("✅ Заказ выполнен. Фото сохранено.")
 

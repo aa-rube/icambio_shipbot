@@ -20,11 +20,19 @@ async def on_startup():
 
 @app.post("/api/orders")
 async def create_order(payload: IncomingOrder):
+    import logging
+    logger = logging.getLogger(__name__)
     db = await get_db()
     redis = get_redis()
 
+    # Try to find courier by name first, then by tg_chat_id if name is numeric
     courier = await db.couriers.find_one({"name": payload.courier_name})
+    if not courier and payload.courier_name.isdigit():
+        courier = await db.couriers.find_one({"tg_chat_id": int(payload.courier_name)})
+        logger.info(f"Courier found by tg_chat_id: {payload.courier_name}")
+    
     if not courier:
+        logger.warning(f"Courier not found: {payload.courier_name}")
         raise HTTPException(status_code=404, detail="Courier not found")
 
     # Ensure external order id uniqueness (also enforced by unique index)
