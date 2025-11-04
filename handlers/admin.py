@@ -109,7 +109,6 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
         "name": full_name,
         "username": username,
         "tg_chat_id": user_id,
-        "manager_chat_id": None,
         "is_on_shift": False,
         "shift_started_at": None,
         "last_location": None,

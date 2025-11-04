@@ -1,12 +1,17 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 
-def main_menu() -> ReplyKeyboardMarkup:
-    kb = [
-        [KeyboardButton(text="🟢 Начать смену"), KeyboardButton(text="🔴 Закончить смену")],
-        [KeyboardButton(text="📋 Мои заказы")],
-    ]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+def main_menu(is_on_shift: bool = False) -> InlineKeyboardMarkup:
+    if is_on_shift:
+        kb = [
+            [InlineKeyboardButton(text="🔴 Закончить смену", callback_data="shift:end")],
+            [InlineKeyboardButton(text="📋 Мои заказы", callback_data="orders:list")],
+        ]
+    else:
+        kb = [
+            [InlineKeyboardButton(text="🟢 Начать смену", callback_data="shift:start")],
+            [InlineKeyboardButton(text="📋 Мои заказы", callback_data="orders:list")],
+        ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
 
-def request_location_kb() -> ReplyKeyboardMarkup:
-    kb = [[KeyboardButton(text="📍 Отправить геострим", request_location=True)]]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
+def remove_keyboard() -> ReplyKeyboardRemove:
+    return ReplyKeyboardRemove()

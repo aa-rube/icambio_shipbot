@@ -23,20 +23,21 @@ def format_order_text(order: dict) -> str:
         lines.append(f"Примечание: {order['notes']}")
     return "\n".join(lines)
 
-@router.message(F.text == "📋 Мои заказы")
-async def my_orders(message: Message):
+@router.callback_query(F.data == "orders:list")
+async def cb_my_orders(call: CallbackQuery):
     import logging
     logger = logging.getLogger(__name__)
-    logger.info(f"User {message.from_user.id} viewing orders")
+    logger.info(f"User {call.from_user.id} viewing orders")
     
     db = await get_db()
-    courier = await db.couriers.find_one({"tg_chat_id": message.chat.id})
+    courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
     if not courier:
-        await message.answer("Сначала отправь /start")
+        await call.answer("Пользователь не найден", show_alert=True)
         return
     
     from db.models import Action
-    await Action.log(db, message.from_user.id, "order_viewed")
+    await Action.log(db, call.from_user.id, "order_viewed")
+    await call.answer()
     
     cursor = db.orders.find({
         "assigned_to": courier["_id"],
@@ -47,11 +48,11 @@ async def my_orders(message: Message):
         found = True
         text = format_order_text(order)
         if order["status"] == "waiting":
-            await message.answer(text, reply_markup=new_order_kb(order["external_id"]))
+            await call.message.answer(text, reply_markup=new_order_kb(order["external_id"]))
         elif order["status"] == "in_transit":
-            await message.answer(text, reply_markup=in_transit_kb(order["external_id"]))
+            await call.message.answer(text, reply_markup=in_transit_kb(order["external_id"]))
     if not found:
-        await message.answer("Нет активных заказов.")
+        await call.message.answer("Нет активных заказов.")
 
 @router.callback_query(F.data.startswith("order:go:"))
 async def cb_order_go(call: CallbackQuery, bot: Bot):

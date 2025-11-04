@@ -16,7 +16,6 @@ async def _ensure_courier(db, chat_id: int, tg_user) -> dict:
             "name": name,
             "username": tg_user.username,
             "tg_chat_id": chat_id,
-            "manager_chat_id": None,
             "is_on_shift": False,
             "shift_started_at": None,
             "last_location": None,
@@ -66,4 +65,5 @@ async def cmd_start(message: Message):
         f"📅 Сегодня: {today}\n"
         f"📦 Активные: {active}"
     )
-    await message.answer(text, reply_markup=main_menu())
+    is_on_shift = courier.get("is_on_shift", False)
+    await message.answer(text, reply_markup=main_menu(is_on_shift))

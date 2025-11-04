@@ -23,3 +23,6 @@ LOC_TTL   = int(os.getenv("LOC_TTL",   str(12 * 60 * 60)))        # 12 hours
 PHOTO_WAIT_TTL = int(os.getenv("PHOTO_WAIT_TTL", str(10 * 60)))   # 10 minutes
 ORDER_LOCK_TTL = int(os.getenv("ORDER_LOCK_TTL", str(30)))        # 30 seconds
 LIVE_LOCATION_DURATION = int(os.getenv("LIVE_LOCATION_DURATION", str(8 * 60 * 60)))  # 8 hours
+
+# Manager
+MANAGER_CHAT_ID = int(os.getenv("MANAGER_CHAT_ID", "0"))
