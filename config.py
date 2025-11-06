@@ -26,3 +26,6 @@ LIVE_LOCATION_DURATION = int(os.getenv("LIVE_LOCATION_DURATION", str(8 * 60 * 60
 
 # Manager
 MANAGER_CHAT_ID = int(os.getenv("MANAGER_CHAT_ID", "0"))
+
+# Webhook
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")

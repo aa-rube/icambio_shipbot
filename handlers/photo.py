@@ -34,9 +34,21 @@ async def handle_photo(message: Message, bot: Bot):
     )
     await redis.delete(f"courier:photo_wait:{chat_id}")
 
+    # Получаем обновленный заказ для webhook
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+
     from db.models import Action
     await Action.log(db, message.from_user.id, "photo_sent", order_id=external_id, details={"file_id": file_id})
     logger.info(f"User {message.from_user.id} completed order {external_id} with photo")
+
+    # Отправка webhook
+    from utils.webhooks import send_webhook, prepare_order_data
+    order_data = await prepare_order_data(db, order)
+    webhook_data = {
+        **order_data,
+        "timestamp": utcnow_iso()
+    }
+    await send_webhook("order_completed", webhook_data)
 
     await message.answer("✅ Заказ выполнен. Фото сохранено.")
 

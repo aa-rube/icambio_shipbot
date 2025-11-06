@@ -92,6 +92,21 @@ async def handle_location(message: Message, bot: Bot):
         await Action.log(db, message.from_user.id, "shift_start", details={"location": last_location, "shift_id": shift_id})
         logger.info(f"Action logged, shift_id={shift_id}")
 
+        # Обновляем данные курьера после всех изменений
+        courier = await db.couriers.find_one({"_id": courier["_id"]})
+        
+        # Отправка webhook
+        from utils.webhooks import send_webhook, prepare_courier_data
+        from db.models import utcnow_iso
+        courier_data = await prepare_courier_data(db, courier)
+        webhook_data = {
+            **courier_data,
+            "location": last_location,
+            "shift_id": shift_id,
+            "timestamp": utcnow_iso()
+        }
+        await send_webhook("shift_start", webhook_data)
+
         await message.answer(
             f"✅ Курьер {courier['name']} на смене\n\n"
             "Геопозиция сохранена. При появлении новых заказов — я уведомлю!",
@@ -141,6 +156,19 @@ async def cb_end_shift(call: CallbackQuery, bot: Bot):
     from db.models import Action
     await Action.log(db, call.from_user.id, "shift_end")
     logger.info(f"User {call.from_user.id} ended shift")
+
+    # Обновляем данные курьера после всех изменений
+    courier = await db.couriers.find_one({"_id": courier["_id"]})
+    
+    # Отправка webhook
+    from utils.webhooks import send_webhook, prepare_courier_data
+    from db.models import utcnow_iso
+    courier_data = await prepare_courier_data(db, courier)
+    webhook_data = {
+        **courier_data,
+        "timestamp": utcnow_iso()
+    }
+    await send_webhook("shift_end", webhook_data)
 
     await call.message.edit_text(
         "💤 Смена завершена\nХорошей передышки!",

@@ -102,6 +102,15 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
     await Action.log(db, call.from_user.id, "order_accepted", order_id=external_id)
     logger.info(f"User {call.from_user.id} accepted order {external_id}")
     
+    # Отправка webhook
+    from utils.webhooks import send_webhook, prepare_order_data
+    order_data = await prepare_order_data(db, order)
+    webhook_data = {
+        **order_data,
+        "timestamp": utcnow_iso()
+    }
+    await send_webhook("order_accepted", webhook_data)
+    
     await call.message.edit_text(format_order_text(order), parse_mode="HTML", reply_markup=in_transit_kb(external_id))
     await call.answer("Статус: в пути")
 
