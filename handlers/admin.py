@@ -106,17 +106,20 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
     await Action.log(db, message.from_user.id, "admin_add_user", details={"added_user_id": user_id, "name": full_name})
     
     # Создание курьера в Odoo
-    odoo_id = None
+    odoo_created = False
     try:
         from utils.odoo import create_courier
-        odoo_id = await create_courier(
+        # create_courier использует courier_tg_chat_id как основной идентификатор
+        # Автоматически обновляет существующего курьера или создает нового
+        odoo_result = await create_courier(
             name=full_name,
             courier_tg_chat_id=str(user_id),
             phone=None,  # Телефон можно добавить позже
             is_online=False
         )
-        if odoo_id:
-            logger.info(f"Courier created in Odoo with ID: {odoo_id}")
+        if odoo_result:
+            logger.info(f"Courier created/updated in Odoo for user {user_id} (courier_tg_chat_id: {user_id})")
+            odoo_created = True
         else:
             logger.warning(f"Failed to create courier in Odoo for user {user_id}")
     except Exception as e:
@@ -129,12 +132,12 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
         "is_on_shift": False,
         "shift_started_at": None,
         "last_location": None,
-        "odoo_id": odoo_id,  # Сохраняем ID из Odoo для последующих обновлений
+        "odoo_id": str(user_id),  # odoo_id = courier_tg_chat_id (основной идентификатор)
     }
     await db.couriers.insert_one(courier)
-    logger.info(f"Admin {message.from_user.id} added user {user_id} ({full_name}), Odoo ID: {odoo_id}")
+    logger.info(f"Admin {message.from_user.id} added user {user_id} ({full_name}), Odoo: {'created' if odoo_created else 'failed'}")
     
-    odoo_status = f"\nOdoo ID: {odoo_id}" if odoo_id else "\n⚠️ Odoo: не создан"
+    odoo_status = "\n✅ Odoo: создан/обновлен" if odoo_created else "\n⚠️ Odoo: не создан"
     username_text = f"Username: @{username}\n" if username else ""
     await message.answer(
         f"✅ Курьер добавлен\n"

@@ -92,24 +92,42 @@ async def create_courier(name: str, courier_tg_chat_id: str, phone: Optional[str
         logger.warning(f"Failed to create courier in Odoo: {name} (TG: {courier_tg_chat_id})")
         return None
 
-async def update_courier_status(odoo_id: int, is_online: bool) -> bool:
+async def update_courier_status(courier_tg_chat_id: str, is_online: bool) -> bool:
     """
-    Обновляет статус онлайн/оффлайн курьера в Odoo
+    Обновляет статус онлайн/оффлайн курьера в Odoo по courier_tg_chat_id
     
     Args:
-        odoo_id: ID курьера в Odoo
+        courier_tg_chat_id: Telegram Chat ID курьера (строка) - используется как основной идентификатор
         is_online: Новый статус (True = онлайн, False = оффлайн)
         
     Returns:
         True если успешно обновлено, False в противном случае
     """
-    result = await odoo_call("call", "courier.person", "write", [[odoo_id], {"is_online": is_online}])
+    # Сначала находим курьера по courier_tg_chat_id через search
+    search_result = await odoo_call(
+        "call",
+        "courier.person",
+        "search",
+        [
+            [["courier_tg_chat_id", "=", str(courier_tg_chat_id)]]
+        ]
+    )
+    
+    if not search_result or len(search_result) == 0:
+        logger.warning(f"Courier with TG ID {courier_tg_chat_id} not found in Odoo")
+        return False
+    
+    # Получаем внутренний ID Odoo из результата search
+    odoo_internal_id = search_result[0]
+    
+    # Обновляем статус используя внутренний ID
+    result = await odoo_call("call", "courier.person", "write", [[odoo_internal_id], {"is_online": is_online}])
     
     if result:
-        logger.info(f"Courier {odoo_id} status updated to {'online' if is_online else 'offline'}")
+        logger.info(f"Courier {courier_tg_chat_id} (Odoo ID: {odoo_internal_id}) status updated to {'online' if is_online else 'offline'}")
         return True
     else:
-        logger.warning(f"Failed to update courier {odoo_id} status")
+        logger.warning(f"Failed to update courier {courier_tg_chat_id} status")
         return False
 
 async def find_courier_by_tg_chat_id(courier_tg_chat_id: str) -> Optional[Dict[str, Any]]:

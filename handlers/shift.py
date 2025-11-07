@@ -97,29 +97,13 @@ async def handle_location(message: Message, bot: Bot):
         
         # Обновление статуса в Odoo
         try:
-            from utils.odoo import update_courier_status, find_courier_by_tg_chat_id
-            odoo_id = courier.get("odoo_id")
-            
-            # Если odoo_id нет, пытаемся найти курьера в Odoo по TG Chat ID
-            if not odoo_id:
-                odoo_courier = await find_courier_by_tg_chat_id(str(chat_id))
-                if odoo_courier:
-                    odoo_id = odoo_courier.get("id")
-                    # Сохраняем odoo_id в MongoDB для будущих обновлений
-                    await db.couriers.update_one(
-                        {"_id": courier["_id"]},
-                        {"$set": {"odoo_id": odoo_id}}
-                    )
-                    logger.info(f"Found and saved Odoo ID {odoo_id} for courier {chat_id}")
-            
-            if odoo_id:
-                success = await update_courier_status(odoo_id, is_online=True)
-                if success:
-                    logger.info(f"Courier {odoo_id} status updated to online in Odoo")
-                else:
-                    logger.warning(f"Failed to update courier {odoo_id} status to online in Odoo")
+            from utils.odoo import update_courier_status
+            # courier_tg_chat_id используется как основной идентификатор
+            success = await update_courier_status(str(chat_id), is_online=True)
+            if success:
+                logger.info(f"Courier {chat_id} status updated to online in Odoo")
             else:
-                logger.warning(f"Courier {chat_id} has no Odoo ID, skipping status update")
+                logger.warning(f"Failed to update courier {chat_id} status to online in Odoo")
         except Exception as e:
             logger.error(f"Error updating courier status in Odoo: {e}", exc_info=True)
         
@@ -190,29 +174,13 @@ async def cb_end_shift(call: CallbackQuery, bot: Bot):
     
     # Обновление статуса в Odoo
     try:
-        from utils.odoo import update_courier_status, find_courier_by_tg_chat_id
-        odoo_id = courier.get("odoo_id")
-        
-        # Если odoo_id нет, пытаемся найти курьера в Odoo по TG Chat ID
-        if not odoo_id:
-            odoo_courier = await find_courier_by_tg_chat_id(str(chat_id))
-            if odoo_courier:
-                odoo_id = odoo_courier.get("id")
-                # Сохраняем odoo_id в MongoDB для будущих обновлений
-                await db.couriers.update_one(
-                    {"_id": courier["_id"]},
-                    {"$set": {"odoo_id": odoo_id}}
-                )
-                logger.info(f"Found and saved Odoo ID {odoo_id} for courier {chat_id}")
-        
-        if odoo_id:
-            success = await update_courier_status(odoo_id, is_online=False)
-            if success:
-                logger.info(f"Courier {odoo_id} status updated to offline in Odoo")
-            else:
-                logger.warning(f"Failed to update courier {odoo_id} status to offline in Odoo")
+        from utils.odoo import update_courier_status
+        # courier_tg_chat_id используется как основной идентификатор
+        success = await update_courier_status(str(chat_id), is_online=False)
+        if success:
+            logger.info(f"Courier {chat_id} status updated to offline in Odoo")
         else:
-            logger.warning(f"Courier {chat_id} has no Odoo ID, skipping status update")
+            logger.warning(f"Failed to update courier {chat_id} status to offline in Odoo")
     except Exception as e:
         logger.error(f"Error updating courier status in Odoo: {e}", exc_info=True)
     
