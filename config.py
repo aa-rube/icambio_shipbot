@@ -3,6 +3,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Odoo
+ODOO_URL = os.getenv("ODOO_URL", "http://localhost:8069/jsonrpc")
+ODOO_LOGIN = os.getenv("ODOO_LOGIN", "")
+ODOO_API_KEY = os.getenv("ODOO_API_KEY", "")
+
 # Telegram Bot
 BOT_TOKEN = os.getenv("BOT_TOKEN", "PUT_YOUR_TELEGRAM_BOT_TOKEN_HERE")
 

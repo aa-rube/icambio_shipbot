@@ -105,6 +105,23 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
     from db.models import Action
     await Action.log(db, message.from_user.id, "admin_add_user", details={"added_user_id": user_id, "name": full_name})
     
+    # Создание курьера в Odoo
+    odoo_id = None
+    try:
+        from utils.odoo import create_courier
+        odoo_id = await create_courier(
+            name=full_name,
+            courier_tg_chat_id=str(user_id),
+            phone=None,  # Телефон можно добавить позже
+            is_online=False
+        )
+        if odoo_id:
+            logger.info(f"Courier created in Odoo with ID: {odoo_id}")
+        else:
+            logger.warning(f"Failed to create courier in Odoo for user {user_id}")
+    except Exception as e:
+        logger.error(f"Error creating courier in Odoo: {e}", exc_info=True)
+    
     courier = {
         "name": full_name,
         "username": username,
@@ -112,15 +129,19 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
         "is_on_shift": False,
         "shift_started_at": None,
         "last_location": None,
+        "odoo_id": odoo_id,  # Сохраняем ID из Odoo для последующих обновлений
     }
     await db.couriers.insert_one(courier)
-    logger.info(f"Admin {message.from_user.id} added user {user_id} ({full_name})")
+    logger.info(f"Admin {message.from_user.id} added user {user_id} ({full_name}), Odoo ID: {odoo_id}")
     
+    odoo_status = f"\nOdoo ID: {odoo_id}" if odoo_id else "\n⚠️ Odoo: не создан"
+    username_text = f"Username: @{username}\n" if username else ""
     await message.answer(
         f"✅ Курьер добавлен\n"
         f"ID: {user_id}\n"
         f"Имя: {full_name}\n"
-        f"Username: @{username}" if username else ""
+        f"{username_text}"
+        f"{odoo_status}"
     )
     await state.clear()
 
