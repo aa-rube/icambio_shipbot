@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from db.mongo import get_db
 from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb
-from utils.location_redirect import generate_location_redirect_key, get_location_redirect_url
+from utils.location_redirect import generate_location_redirect_key, get_location_redirect_url, generate_route_redirect_key, get_route_redirect_url
 
 router = Router()
 
@@ -56,13 +56,25 @@ async def cb_back_from_couriers(call: CallbackQuery, state: FSMContext):
     # Сохраняем текст сообщения
     message_text = call.message.text or call.message.caption or ""
     
-    # Генерируем новый ключ редиректа для обновления кнопки
+    # Генерируем новые ключи редиректа для обновления кнопок
     try:
         msg_id = call.message.message_id
-        redirect_key = await generate_location_redirect_key(chat_id, msg_id)
-        redirect_url = get_location_redirect_url(redirect_key)
-        # Редактируем сообщение, изменяя клавиатуру: убираем "Назад", оставляем "Где курьер?" с новым URL
-        await call.message.edit_text(message_text, reply_markup=courier_location_kb(chat_id, redirect_url))
+        location_redirect_key = await generate_location_redirect_key(chat_id, msg_id)
+        location_redirect_url = get_location_redirect_url(location_redirect_key)
+        
+        # Пытаемся сгенерировать ключ для маршрута
+        route_redirect_url = None
+        try:
+            route_redirect_key = await generate_route_redirect_key(chat_id, msg_id)
+            route_redirect_url = get_route_redirect_url(route_redirect_key)
+        except Exception as route_error:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to generate route redirect for courier {chat_id}: {route_error}")
+            # Если не удалось создать маршрут, просто не добавляем кнопку
+        
+        # Редактируем сообщение, изменяя клавиатуру: убираем "Назад", оставляем кнопки с новыми URL
+        await call.message.edit_text(message_text, reply_markup=courier_location_kb(chat_id, location_redirect_url, route_redirect_url))
     except Exception as e:
         import logging
         logger = logging.getLogger(__name__)
@@ -335,15 +347,24 @@ async def cb_on_shift_couriers(call: CallbackQuery):
             f"Вышел на смену: {shift_time_text}"
         )
         
-        # Генерируем ключ редиректа и URL для кнопки
+        # Генерируем ключи редиректа и URL для кнопок
         try:
             # Отправляем сообщение сначала, чтобы получить msg_id
             temp_msg = await bot.send_message(admin_chat_id, text)
             msg_id = temp_msg.message_id
             
-            # Генерируем ключ редиректа
-            redirect_key = await generate_location_redirect_key(chat_id, msg_id)
-            redirect_url = get_location_redirect_url(redirect_key)
+            # Генерируем ключ редиректа для локации
+            location_redirect_key = await generate_location_redirect_key(chat_id, msg_id)
+            location_redirect_url = get_location_redirect_url(location_redirect_key)
+            
+            # Пытаемся сгенерировать ключ для маршрута
+            route_redirect_url = None
+            try:
+                route_redirect_key = await generate_route_redirect_key(chat_id, msg_id)
+                route_redirect_url = get_route_redirect_url(route_redirect_key)
+            except Exception as route_error:
+                logger.warning(f"Failed to generate route redirect for courier {chat_id}: {route_error}")
+                # Если не удалось создать маршрут, просто не добавляем кнопку
             
             # Редактируем сообщение с правильной клавиатурой
             if idx == len(couriers) - 1:
@@ -351,14 +372,14 @@ async def cb_on_shift_couriers(call: CallbackQuery):
                 await bot.edit_message_reply_markup(
                     chat_id=admin_chat_id,
                     message_id=msg_id,
-                    reply_markup=courier_location_with_back_kb(chat_id, redirect_url)
+                    reply_markup=courier_location_with_back_kb(chat_id, location_redirect_url, route_redirect_url)
                 )
             else:
-                # Для остальных сообщений только кнопка "Где курьер?"
+                # Для остальных сообщений кнопки "Где курьер?" и "Маршрут сегодня" (если доступен)
                 await bot.edit_message_reply_markup(
                     chat_id=admin_chat_id,
                     message_id=msg_id,
-                    reply_markup=courier_location_kb(chat_id, redirect_url)
+                    reply_markup=courier_location_kb(chat_id, location_redirect_url, route_redirect_url)
                 )
         except ValueError as e:
             # Если локация не найдена, отправляем сообщение без кнопки

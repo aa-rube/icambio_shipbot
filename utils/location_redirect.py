@@ -114,3 +114,97 @@ def get_location_redirect_url(key: str) -> str:
     """
     return f"{API_BASE_URL}/api/location/{key}"
 
+async def generate_route_redirect_key(chat_id: int, msg_id: int, date: str = None) -> str:
+    """
+    Генерирует уникальный ключ для редиректа маршрута курьера за смену.
+    Формат: {random_part}-{msg_id}
+    
+    Args:
+        chat_id: Telegram chat ID курьера
+        msg_id: ID сообщения с кнопкой
+        date: Дата в формате DD-MM-YYYY (если не указана, используется сегодня)
+        
+    Returns:
+        Уникальный ключ для редиректа
+        
+    Raises:
+        ValueError: Если маршрут не найден
+    """
+    from datetime import datetime, timezone
+    
+    # Генерируем случайную часть ключа
+    random_part = secrets.token_urlsafe(16)
+    key = f"{random_part}-{msg_id}"
+    
+    # Если дата не указана, используем сегодня
+    if not date:
+        now = datetime.now(timezone.utc)
+        date = now.strftime("%d-%m-%Y")
+    
+    # Ищем shift_id по chat_id и дате
+    db = await get_db()
+    location = await db.locations.find_one(
+        {"chat_id": chat_id, "date": date},
+        sort=[("timestamp_ns", -1)]
+    )
+    
+    if not location:
+        raise ValueError(f"Route not found for courier {chat_id} on date {date}")
+    
+    shift_id = location.get("shift_id")
+    if not shift_id:
+        raise ValueError(f"Shift ID not found for courier {chat_id} on date {date}")
+    
+    # Сохраняем данные в Redis
+    data = {
+        "chat_id": chat_id,
+        "shift_id": shift_id,
+        "date": date,
+        "msg_id": msg_id
+    }
+    
+    redis = get_redis()
+    await redis.setex(
+        f"route:redirect:{key}",
+        LOCATION_REDIRECT_TTL,
+        json.dumps(data)
+    )
+    
+    return key
+
+async def get_route_redirect_data(key: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает данные редиректа маршрута по ключу и обновляет TTL.
+    
+    Args:
+        key: Ключ редиректа
+        
+    Returns:
+        Данные редиректа или None если ключ не найден/истек
+    """
+    redis = get_redis()
+    data_str = await redis.get(f"route:redirect:{key}")
+    
+    if not data_str:
+        return None
+    
+    # Обновляем TTL
+    await redis.expire(f"route:redirect:{key}", LOCATION_REDIRECT_TTL)
+    
+    try:
+        return json.loads(data_str)
+    except json.JSONDecodeError:
+        return None
+
+def get_route_redirect_url(key: str) -> str:
+    """
+    Формирует URL для редиректа маршрута.
+    
+    Args:
+        key: Ключ редиректа
+        
+    Returns:
+        Полный URL для редиректа
+    """
+    return f"{API_BASE_URL}/api/shift/route/{key}"
+

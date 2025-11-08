@@ -136,6 +136,259 @@ async def update_order(external_id: str, payload: UpdateOrder):
     
     return JSONResponse({"ok": True, "external_id": external_id})
 
+@app.get("/api/shift/route")
+async def get_shift_route(shift_id: str = None, chat_id: int = None, date: str = None):
+    """
+    Получает маршрут за смену и возвращает URL для Google Maps с соединенными точками.
+    
+    Параметры:
+    - shift_id: ID смены (приоритетный параметр)
+    - chat_id: Telegram chat ID курьера (если shift_id не указан)
+    - date: Дата в формате DD-MM-YYYY (если shift_id не указан, по умолчанию сегодня)
+    
+    Возвращает JSON с URL карты или редиректит на Google Maps.
+    """
+    import logging
+    from datetime import datetime, timezone
+    
+    logger = logging.getLogger(__name__)
+    db = await get_db()
+    
+    # Определяем shift_id
+    if shift_id:
+        # Используем переданный shift_id
+        pass
+    elif chat_id:
+        # Ищем shift_id по chat_id
+        if not date:
+            # Если дата не указана, используем сегодня
+            now = datetime.now(timezone.utc)
+            date = now.strftime("%d-%m-%Y")
+        
+        # Ищем последнюю смену курьера за указанную дату
+        courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+        if not courier:
+            raise HTTPException(status_code=404, detail="Courier not found")
+        
+        # Ищем локации за указанную дату и получаем shift_id из них
+        location = await db.locations.find_one(
+            {"chat_id": chat_id, "date": date},
+            sort=[("timestamp_ns", -1)]
+        )
+        
+        if not location:
+            raise HTTPException(status_code=404, detail=f"No locations found for courier {chat_id} on date {date}")
+        
+        shift_id = location.get("shift_id")
+        if not shift_id:
+            raise HTTPException(status_code=404, detail="Shift ID not found")
+    else:
+        raise HTTPException(status_code=400, detail="Either shift_id or chat_id must be provided")
+    
+    # Получаем все локации за смену, отсортированные по timestamp
+    locations = await db.locations.find(
+        {"shift_id": shift_id}
+    ).sort("timestamp_ns", 1).to_list(10000)  # Сортируем от меньшего к большему
+    
+    if not locations:
+        raise HTTPException(status_code=404, detail="No locations found for this shift")
+    
+    if len(locations) < 2:
+        # Если только одна точка, просто показываем её
+        loc = locations[0]
+        maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
+        return JSONResponse({
+            "ok": True,
+            "shift_id": shift_id,
+            "points_count": 1,
+            "map_url": maps_url
+        })
+    
+    # Формируем URL для Google Maps с маршрутом
+    # Формат: https://www.google.com/maps/dir/{lat1},{lon1}/{lat2},{lon2}/...
+    waypoints = []
+    for loc in locations:
+        lat = loc.get("lat")
+        lon = loc.get("lon")
+        if lat is not None and lon is not None:
+            # Валидация координат
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                waypoints.append(f"{lat},{lon}")
+    
+    if len(waypoints) < 2:
+        # Если после валидации осталось меньше 2 точек
+        loc = locations[0]
+        maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
+        return JSONResponse({
+            "ok": True,
+            "shift_id": shift_id,
+            "points_count": len(waypoints),
+            "map_url": maps_url
+        })
+    
+    # Создаем URL с маршрутом
+    waypoints_str = "/".join(waypoints)
+    maps_url = f"https://www.google.com/maps/dir/{waypoints_str}"
+    
+    logger.info(f"Generated route map for shift {shift_id} with {len(waypoints)} points")
+    
+    return JSONResponse({
+        "ok": True,
+        "shift_id": shift_id,
+        "points_count": len(waypoints),
+        "map_url": maps_url
+    })
+
+@app.get("/api/shift/route/redirect")
+async def redirect_shift_route(shift_id: str = None, chat_id: int = None, date: str = None):
+    """
+    Редирект на Google Maps с маршрутом за смену.
+    Те же параметры, что и в /api/shift/route, но сразу редиректит на карту.
+    """
+    import logging
+    from datetime import datetime, timezone
+    
+    logger = logging.getLogger(__name__)
+    db = await get_db()
+    
+    # Определяем shift_id (та же логика, что и в get_shift_route)
+    if shift_id:
+        pass
+    elif chat_id:
+        if not date:
+            now = datetime.now(timezone.utc)
+            date = now.strftime("%d-%m-%Y")
+        
+        courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+        if not courier:
+            raise HTTPException(status_code=404, detail="Courier not found")
+        
+        location = await db.locations.find_one(
+            {"chat_id": chat_id, "date": date},
+            sort=[("timestamp_ns", -1)]
+        )
+        
+        if not location:
+            raise HTTPException(status_code=404, detail=f"No locations found for courier {chat_id} on date {date}")
+        
+        shift_id = location.get("shift_id")
+        if not shift_id:
+            raise HTTPException(status_code=404, detail="Shift ID not found")
+    else:
+        raise HTTPException(status_code=400, detail="Either shift_id or chat_id must be provided")
+    
+    # Получаем все локации за смену
+    locations = await db.locations.find(
+        {"shift_id": shift_id}
+    ).sort("timestamp_ns", 1).to_list(10000)
+    
+    if not locations:
+        raise HTTPException(status_code=404, detail="No locations found for this shift")
+    
+    # Формируем waypoints
+    waypoints = []
+    for loc in locations:
+        lat = loc.get("lat")
+        lon = loc.get("lon")
+        if lat is not None and lon is not None:
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                waypoints.append(f"{lat},{lon}")
+    
+    if len(waypoints) < 2:
+        # Если только одна точка
+        loc = locations[0]
+        maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
+    else:
+        # Создаем URL с маршрутом
+        waypoints_str = "/".join(waypoints)
+        maps_url = f"https://www.google.com/maps/dir/{waypoints_str}"
+    
+    logger.info(f"Redirecting to route map for shift {shift_id} with {len(waypoints)} points")
+    
+    return RedirectResponse(url=maps_url, status_code=302)
+
+@app.get("/api/shift/route/{key}")
+async def route_redirect(key: str):
+    """
+    Редирект на Google Maps с маршрутом курьера за смену.
+    Проверяет ключ в Redis, получает актуальные данные и редиректит на карту с маршрутом.
+    """
+    import logging
+    from datetime import datetime, timezone
+    from db.redis_client import get_redis
+    
+    logger = logging.getLogger(__name__)
+    
+    # Логируем входящий запрос для отладки
+    logger.info(f"Route redirect request received: key={key}")
+    
+    # Получаем данные редиректа (БЕЗ обновления TTL - чтобы ключ истекал через 24 часа)
+    redis = get_redis()
+    data_str = await redis.get(f"route:redirect:{key}")
+    
+    if not data_str:
+        # Если ключ не найден или истек
+        logger.warning(f"Route redirect key not found or expired: {key}")
+        raise HTTPException(status_code=404, detail="Link expired or invalid")
+    
+    try:
+        data = json.loads(data_str)
+    except json.JSONDecodeError:
+        logger.error(f"Invalid JSON in redirect data for key: {key}")
+        raise HTTPException(status_code=500, detail="Invalid redirect data")
+    
+    chat_id = data.get("chat_id")
+    shift_id = data.get("shift_id")
+    date = data.get("date")
+    
+    if not shift_id:
+        logger.error(f"Shift ID not found in redirect data: {data}")
+        raise HTTPException(status_code=500, detail="Invalid redirect data")
+    
+    db = await get_db()
+    
+    # Получаем все локации за смену, отсортированные по timestamp
+    locations = await db.locations.find(
+        {"shift_id": shift_id}
+    ).sort("timestamp_ns", 1).to_list(10000)  # Сортируем от меньшего к большему
+    
+    if not locations:
+        logger.warning(f"No locations found for shift {shift_id}")
+        raise HTTPException(status_code=404, detail="No locations found for this shift")
+    
+    if len(locations) < 2:
+        # Если только одна точка, просто показываем её
+        loc = locations[0]
+        maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
+        logger.debug(f"Redirecting route key {key} to Google Maps (single point): {loc['lat']},{loc['lon']}")
+        return RedirectResponse(url=maps_url, status_code=302)
+    
+    # Формируем waypoints
+    waypoints = []
+    for loc in locations:
+        lat = loc.get("lat")
+        lon = loc.get("lon")
+        if lat is not None and lon is not None:
+            # Валидация координат
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                waypoints.append(f"{lat},{lon}")
+    
+    if len(waypoints) < 2:
+        # Если после валидации осталось меньше 2 точек
+        loc = locations[0]
+        maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
+        logger.debug(f"Redirecting route key {key} to Google Maps (single point after validation): {loc['lat']},{loc['lon']}")
+        return RedirectResponse(url=maps_url, status_code=302)
+    
+    # Создаем URL с маршрутом
+    waypoints_str = "/".join(waypoints)
+    maps_url = f"https://www.google.com/maps/dir/{waypoints_str}"
+    
+    logger.info(f"Redirecting route key {key} to Google Maps with {len(waypoints)} points for shift {shift_id}")
+    
+    # Редиректим на Google Maps
+    return RedirectResponse(url=maps_url, status_code=302)
+
 @app.get("/api/location/{key}")
 async def location_redirect(key: str, lang: str = None):
     """
