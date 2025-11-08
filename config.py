@@ -4,8 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Odoo
-ODOO_URL = os.getenv("ODOO_URL", "http://localhost:8069/jsonrpc")
-ODOO_DB = os.getenv("ODOO_DB", "")  # Имя базы данных Odoo
+ODOO_URL = os.getenv("ODOO_URL", "http://localhost:8069/web/dataset/call_kw")
 ODOO_LOGIN = os.getenv("ODOO_LOGIN", "")
 ODOO_API_KEY = os.getenv("ODOO_API_KEY", "")
 
