@@ -47,11 +47,15 @@ async def cb_admin_back(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text("🔧 Админ-панель", reply_markup=admin_main_kb())
     await call.answer()
 
-@router.callback_query(F.data == "admin:back_from_couriers")
+@router.callback_query(F.data.startswith("admin:back_from_couriers:"))
 async def cb_back_from_couriers(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    # Удаляем кнопку "Назад" из сообщения
-    await call.message.edit_reply_markup(reply_markup=None)
+    # Извлекаем chat_id курьера из callback_data
+    chat_id = int(call.data.split(":", 2)[2])
+    # Сохраняем текст сообщения
+    message_text = call.message.text or call.message.caption or ""
+    # Редактируем сообщение, изменяя клавиатуру: убираем "Назад", оставляем "Где курьер?"
+    await call.message.edit_text(message_text, reply_markup=courier_location_kb(chat_id))
     # Отправляем новое сообщение с главным меню
     await call.message.answer("🔧 Админ-панель", reply_markup=admin_main_kb())
     await call.answer()

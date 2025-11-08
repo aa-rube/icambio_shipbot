@@ -65,5 +65,5 @@ def courier_location_kb(chat_id: int) -> InlineKeyboardMarkup:
 def courier_location_with_back_kb(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:location:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin:back_from_couriers")]
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_from_couriers:{chat_id}")]
     ])
