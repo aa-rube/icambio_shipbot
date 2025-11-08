@@ -1,14 +1,63 @@
 import aiohttp
 import logging
 from typing import Dict, Any, Optional
-from config import ODOO_URL, ODOO_LOGIN, ODOO_API_KEY
+from config import ODOO_URL, ODOO_DB, ODOO_LOGIN, ODOO_API_KEY
 
 logger = logging.getLogger(__name__)
 
+# Кэш для UID пользователя
+_odoo_uid_cache = None
+
+async def get_odoo_uid() -> Optional[int]:
+    """Получает UID пользователя через аутентификацию с API ключом"""
+    global _odoo_uid_cache
+    
+    if _odoo_uid_cache:
+        return _odoo_uid_cache
+    
+    if not ODOO_URL or not ODOO_LOGIN or not ODOO_API_KEY:
+        return None
+    
+    try:
+        # Аутентификация через /web/session/authenticate с API ключом
+        auth_url = ODOO_URL.replace("/jsonrpc", "/web/session/authenticate")
+        auth_payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "db": ODOO_DB or None,  # Если не указано, Odoo определит из сессии
+                "login": ODOO_LOGIN,
+                "password": ODOO_API_KEY  # API ключ используется как пароль
+            },
+            "id": 1
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                auth_url,
+                json=auth_payload,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if "error" in result:
+                        logger.error(f"Odoo authentication error: {result['error']}")
+                        return None
+                    uid = result.get("result", {}).get("uid")
+                    if uid:
+                        _odoo_uid_cache = uid
+                        logger.info(f"Odoo authentication successful with API key, UID: {uid}")
+                        return uid
+        return None
+    except Exception as e:
+        logger.error(f"Error authenticating with Odoo: {e}", exc_info=True)
+        return None
+
 async def odoo_call(method: str, model: str, method_name: str, args: list, kwargs: dict = None) -> Optional[Any]:
     """
-    Выполняет JSON-RPC запрос к Odoo API (новый формат: /web/dataset/call_kw)
-    Использует API ключ для аутентификации через Basic Auth
+    Выполняет JSON-RPC запрос к Odoo API (старый формат: /jsonrpc)
+    Использует API ключ для аутентификации
     
     Args:
         method: HTTP метод (обычно "call")
@@ -28,25 +77,37 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
         logger.warning("ODOO_LOGIN or ODOO_API_KEY not configured")
         return None
     
-    # Формат запроса для Odoo JSON-RPC API
-    # Использует API ключ через Basic Auth
-    # Добавляем service для совместимости с некоторыми версиями Odoo
+    # Получаем UID через аутентификацию с API ключом
+    uid = await get_odoo_uid()
+    if not uid:
+        logger.warning("Failed to get Odoo UID")
+        return None
+    
+    # Формат запроса для Odoo JSON-RPC API (старый формат: /jsonrpc)
+    # В старом формате params должен быть массивом [service, method, args]
+    # где args = [db, uid, passwd, model, method, args, kwargs]
     payload = {
         "jsonrpc": "2.0",
         "method": method,
         "params": {
-            "service": "object",  # Требуется для некоторых версий Odoo
-            "model": model,
-            "method": method_name,
-            "args": args,
-            "kwargs": kwargs or {}
+            "service": "object",  # Обязательный параметр service
+            "method": "execute_kw",  # Используем execute_kw
+            "args": [
+                ODOO_DB or "",  # database name (пустая строка если не указано)
+                uid,  # user id
+                ODOO_API_KEY,  # API ключ используется как пароль
+                model,  # model
+                method_name,  # method
+                args,  # args
+                kwargs or {}  # kwargs
+            ]
         },
         "id": 1
     }
     
     try:
         async with aiohttp.ClientSession() as session:
-            # API ключ передается через Basic Auth: login:api_key
+            # API ключ также передается через Basic Auth для дополнительной безопасности
             async with session.post(
                 ODOO_URL,
                 json=payload,
