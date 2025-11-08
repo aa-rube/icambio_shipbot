@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from db.mongo import get_db
-from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb
+from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb
 
 router = Router()
 
@@ -45,6 +45,15 @@ async def cmd_admin(message: Message):
 async def cb_admin_back(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.edit_text("🔧 Админ-панель", reply_markup=admin_main_kb())
+    await call.answer()
+
+@router.callback_query(F.data == "admin:back_from_couriers")
+async def cb_back_from_couriers(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    # Удаляем кнопку "Назад" из сообщения
+    await call.message.edit_reply_markup(reply_markup=None)
+    # Отправляем новое сообщение с главным меню
+    await call.message.answer("🔧 Админ-панель", reply_markup=admin_main_kb())
     await call.answer()
 
 @router.callback_query(F.data == "admin:add_user")
@@ -243,17 +252,16 @@ async def cb_on_shift_couriers(call: CallbackQuery):
         await call.answer()
         return
     
-    # Отправляем сообщение с кнопкой "Назад"
-    await call.message.edit_text(
-        "🚚 Курьеры на смене",
-        reply_markup=back_to_admin_kb()
-    )
+    # Если есть курьеры, удаляем сообщение с кнопкой
+    admin_chat_id = call.message.chat.id
+    bot = call.message.bot
+    await call.message.delete()
     
     # Для каждого курьера формируем отдельное сообщение
     now = datetime.now(timezone.utc)
     start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
     
-    for courier in couriers:
+    for idx, courier in enumerate(couriers):
         chat_id = courier.get("tg_chat_id")
         name = courier.get("name", "Unknown")
         username = courier.get("username")
@@ -309,7 +317,11 @@ async def cb_on_shift_couriers(call: CallbackQuery):
             f"Вышел на смену: {shift_time_text}"
         )
         
-        await call.message.answer(text, reply_markup=courier_location_kb(chat_id))
+        # В последнее сообщение добавляем кнопку "Назад"
+        if idx == len(couriers) - 1:
+            await bot.send_message(admin_chat_id, text, reply_markup=courier_location_with_back_kb(chat_id))
+        else:
+            await bot.send_message(admin_chat_id, text, reply_markup=courier_location_kb(chat_id))
     
     await call.answer()
 
