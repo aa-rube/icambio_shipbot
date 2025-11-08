@@ -137,7 +137,6 @@ async def update_order(external_id: str, payload: UpdateOrder):
     return JSONResponse({"ok": True, "external_id": external_id})
 
 @app.get("/api/location/{key}")
-@app.get("/{lang}/api/location/{key}")  # Обработка префикса языка от Odoo (fallback)
 async def location_redirect(key: str, lang: str = None):
     """
     Редирект на Google Maps с координатами курьера.
@@ -145,6 +144,9 @@ async def location_redirect(key: str, lang: str = None):
     """
     import logging
     logger = logging.getLogger(__name__)
+    
+    # Логируем входящий запрос для отладки
+    logger.info(f"Location redirect request received: key={key}, lang={lang}")
     
     # Получаем данные редиректа (БЕЗ обновления TTL - чтобы ключ истекал через 24 часа)
     redis = get_redis()

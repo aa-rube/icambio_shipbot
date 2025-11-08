@@ -12,7 +12,7 @@ services:
       
       # --- HTTP Router (редирект на HTTPS) ---
       # Высокий приоритет (100) чтобы обрабатывать раньше Odoo
-      - traefik.http.routers.shipbot-api-http.priority=100
+      - traefik.http.routers.shipbot-api-http.priority=10000
       - traefik.http.routers.shipbot-api-http.rule=Host(`icambio-test-odoo.setrealtora.ru`) && PathPrefix(`/api`)
       - traefik.http.routers.shipbot-api-http.entrypoints=web
       - traefik.http.routers.shipbot-api-http.middlewares=shipbot-api-https-redirect
@@ -20,7 +20,7 @@ services:
       
       # --- HTTPS Router (основной API, включая /api/location) ---
       # Высокий приоритет (100) чтобы обрабатывать раньше Odoo
-      - traefik.http.routers.shipbot-api.priority=100
+      - traefik.http.routers.shipbot-api.priority=10000
       - traefik.http.routers.shipbot-api.rule=Host(`icambio-test-odoo.setrealtora.ru`) && PathPrefix(`/api`)
       - traefik.http.routers.shipbot-api.entrypoints=websecure
       - traefik.http.routers.shipbot-api.tls=true

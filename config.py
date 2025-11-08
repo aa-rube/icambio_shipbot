@@ -20,7 +20,7 @@ MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "icambio")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # Local API (FastAPI) host/port
-API_HOST = os.getenv("API_HOST", "127.0.0.1")
+API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "5055"))
 
 # TTLs (in seconds)
