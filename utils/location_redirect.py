@@ -206,5 +206,5 @@ def get_route_redirect_url(key: str) -> str:
     Returns:
         Полный URL для редиректа
     """
-    return f"{API_BASE_URL}/api/shift/route/{key}"
+    return f"{API_BASE_URL}/api/location/route/{key}"
 
