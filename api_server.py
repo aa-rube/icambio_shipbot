@@ -137,7 +137,8 @@ async def update_order(external_id: str, payload: UpdateOrder):
     return JSONResponse({"ok": True, "external_id": external_id})
 
 @app.get("/location/{key}")
-async def location_redirect(key: str):
+@app.get("/{lang}/location/{key}")  # Обработка префикса языка от Odoo (fallback)
+async def location_redirect(key: str, lang: str = None):
     """
     Редирект на Google Maps с координатами курьера.
     Проверяет ключ в Redis, обновляет координаты из актуального источника и редиректит на карту.
