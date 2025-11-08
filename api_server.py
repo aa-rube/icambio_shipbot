@@ -1,6 +1,7 @@
 import uvicorn
+import json
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from aiogram import Bot
 from db.mongo import get_db, init_indexes
 from db.redis_client import get_redis
@@ -134,6 +135,69 @@ async def update_order(external_id: str, payload: UpdateOrder):
     logger.info(f"Order {external_id} updated: {update_data}")
     
     return JSONResponse({"ok": True, "external_id": external_id})
+
+@app.get("/location/{key}")
+async def location_redirect(key: str):
+    """
+    Редирект на Google Maps с координатами курьера.
+    Проверяет ключ в Redis, обновляет координаты из актуального источника и редиректит на карту.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Получаем данные редиректа (БЕЗ обновления TTL - чтобы ключ истекал через 24 часа)
+    redis = get_redis()
+    data_str = await redis.get(f"location:redirect:{key}")
+    
+    if not data_str:
+        # Если ключ не найден или истек - игнорируем запрос
+        logger.warning(f"Location redirect key not found or expired: {key}")
+        raise HTTPException(status_code=404, detail="Link expired or invalid")
+    
+    try:
+        data = json.loads(data_str)
+    except json.JSONDecodeError:
+        logger.error(f"Invalid JSON in redirect data for key: {key}")
+        raise HTTPException(status_code=500, detail="Invalid redirect data")
+    
+    chat_id = data.get("chat_id")
+    
+    # Получаем актуальную локацию из Redis или БД
+    lat = None
+    lon = None
+    
+    # Сначала пытаемся из Redis (быстрее и актуальнее)
+    loc_str = await redis.get(f"courier:loc:{chat_id}")
+    if loc_str:
+        try:
+            parts = loc_str.split(",")
+            if len(parts) == 2:
+                lat = float(parts[0])
+                lon = float(parts[1])
+        except (ValueError, IndexError):
+            pass
+    
+    # Если не нашли в Redis, используем из ключа (fallback)
+    if lat is None or lon is None:
+        lat = data.get("lat")
+        lon = data.get("lon")
+    
+    if not lat or not lon:
+        logger.error(f"Invalid coordinates in redirect data: {data}")
+        raise HTTPException(status_code=500, detail="Invalid location data")
+    
+    # Валидация координат
+    if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+        logger.error(f"Coordinates out of range: lat={lat}, lon={lon}")
+        raise HTTPException(status_code=500, detail="Invalid coordinates")
+    
+    # Формируем ссылку на Google Maps
+    maps_url = f"https://maps.google.com/?q={lat},{lon}"
+    
+    logger.debug(f"Redirecting location key {key} to Google Maps: {lat},{lon}")
+    
+    # Редиректим на Google Maps
+    return RedirectResponse(url=maps_url, status_code=302)
 
 if __name__ == "__main__":
     uvicorn.run("api_server:app", host=API_HOST, port=API_PORT, reload=False)

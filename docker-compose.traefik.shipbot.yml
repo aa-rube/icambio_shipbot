@@ -1,0 +1,47 @@
+services:
+  shipbot-api:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=root_default
+      
+      # --- HTTP -> HTTPS ---
+      - traefik.http.middlewares.shipbot-api-https-redirect.redirectscheme.scheme=https
+      - traefik.http.middlewares.shipbot-api-headers.headers.customrequestheaders.X-Forwarded-Proto=https
+      
+      # --- HTTP Router (редирект на HTTPS) ---
+      - traefik.http.routers.shipbot-api-http.rule=Host(`icambio-test-odoo.setrealtora.ru`) && (PathPrefix(`/api`) || PathPrefix(`/location`))
+      - traefik.http.routers.shipbot-api-http.entrypoints=web
+      - traefik.http.routers.shipbot-api-http.middlewares=shipbot-api-https-redirect
+      - traefik.http.routers.shipbot-api-http.service=shipbot-api
+      
+      # --- HTTPS Router (основной API) ---
+      - traefik.http.routers.shipbot-api.rule=Host(`icambio-test-odoo.setrealtora.ru`) && PathPrefix(`/api`)
+      - traefik.http.routers.shipbot-api.entrypoints=websecure
+      - traefik.http.routers.shipbot-api.tls=true
+      - traefik.http.routers.shipbot-api.tls.certresolver=mytlschallenge
+      - traefik.http.routers.shipbot-api.middlewares=shipbot-api-headers
+      - traefik.http.routers.shipbot-api.service=shipbot-api
+      
+      # --- HTTPS Router (редирект локации) ---
+      - traefik.http.routers.shipbot-api-location.rule=Host(`icambio-test-odoo.setrealtora.ru`) && PathPrefix(`/location`)
+      - traefik.http.routers.shipbot-api-location.entrypoints=websecure
+      - traefik.http.routers.shipbot-api-location.tls=true
+      - traefik.http.routers.shipbot-api-location.tls.certresolver=mytlschallenge
+      - traefik.http.routers.shipbot-api-location.middlewares=shipbot-api-headers
+      - traefik.http.routers.shipbot-api-location.service=shipbot-api
+      
+      # --- Service ---
+      - traefik.http.services.shipbot-api.loadbalancer.server.port=5055
+      - traefik.http.services.shipbot-api.loadbalancer.passhostheader=true
+      
+    networks:
+      - shipbot-net       # из базового compose
+      - traefik-net       # внешний, определён ниже
+
+networks:
+  traefik-net:
+    external: true
+    name: root_default
+

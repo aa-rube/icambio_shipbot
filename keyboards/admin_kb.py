@@ -57,13 +57,13 @@ def broadcast_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin:back")]
     ])
 
-def courier_location_kb(chat_id: int) -> InlineKeyboardMarkup:
+def courier_location_kb(chat_id: int, redirect_url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:location:{chat_id}")]
+        [InlineKeyboardButton(text="📍 Где курьер?", url=redirect_url)]
     ])
 
-def courier_location_with_back_kb(chat_id: int) -> InlineKeyboardMarkup:
+def courier_location_with_back_kb(chat_id: int, redirect_url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:location:{chat_id}")],
+        [InlineKeyboardButton(text="📍 Где курьер?", url=redirect_url)],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_from_couriers:{chat_id}")]
     ])

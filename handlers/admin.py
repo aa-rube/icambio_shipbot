@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from db.mongo import get_db
 from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb
+from utils.location_redirect import generate_location_redirect_key, get_location_redirect_url
 
 router = Router()
 
@@ -54,8 +55,21 @@ async def cb_back_from_couriers(call: CallbackQuery, state: FSMContext):
     chat_id = int(call.data.split(":", 2)[2])
     # Сохраняем текст сообщения
     message_text = call.message.text or call.message.caption or ""
-    # Редактируем сообщение, изменяя клавиатуру: убираем "Назад", оставляем "Где курьер?"
-    await call.message.edit_text(message_text, reply_markup=courier_location_kb(chat_id))
+    
+    # Генерируем новый ключ редиректа для обновления кнопки
+    try:
+        msg_id = call.message.message_id
+        redirect_key = await generate_location_redirect_key(chat_id, msg_id)
+        redirect_url = get_location_redirect_url(redirect_key)
+        # Редактируем сообщение, изменяя клавиатуру: убираем "Назад", оставляем "Где курьер?" с новым URL
+        await call.message.edit_text(message_text, reply_markup=courier_location_kb(chat_id, redirect_url))
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to update location redirect for courier {chat_id}: {e}")
+        # Если не удалось обновить редирект, просто убираем кнопку "Назад"
+        await call.message.edit_text(message_text, reply_markup=None)
+    
     # Отправляем новое сообщение с главным меню
     await call.message.answer("🔧 Админ-панель", reply_markup=admin_main_kb())
     await call.answer()
@@ -321,47 +335,42 @@ async def cb_on_shift_couriers(call: CallbackQuery):
             f"Вышел на смену: {shift_time_text}"
         )
         
-        # В последнее сообщение добавляем кнопку "Назад"
-        if idx == len(couriers) - 1:
-            await bot.send_message(admin_chat_id, text, reply_markup=courier_location_with_back_kb(chat_id))
-        else:
-            await bot.send_message(admin_chat_id, text, reply_markup=courier_location_kb(chat_id))
+        # Генерируем ключ редиректа и URL для кнопки
+        try:
+            # Отправляем сообщение сначала, чтобы получить msg_id
+            temp_msg = await bot.send_message(admin_chat_id, text)
+            msg_id = temp_msg.message_id
+            
+            # Генерируем ключ редиректа
+            redirect_key = await generate_location_redirect_key(chat_id, msg_id)
+            redirect_url = get_location_redirect_url(redirect_key)
+            
+            # Редактируем сообщение с правильной клавиатурой
+            if idx == len(couriers) - 1:
+                # Для последнего сообщения добавляем кнопку "Назад"
+                await bot.edit_message_reply_markup(
+                    chat_id=admin_chat_id,
+                    message_id=msg_id,
+                    reply_markup=courier_location_with_back_kb(chat_id, redirect_url)
+                )
+            else:
+                # Для остальных сообщений только кнопка "Где курьер?"
+                await bot.edit_message_reply_markup(
+                    chat_id=admin_chat_id,
+                    message_id=msg_id,
+                    reply_markup=courier_location_kb(chat_id, redirect_url)
+                )
+        except ValueError as e:
+            # Если локация не найдена, отправляем сообщение без кнопки
+            logger.warning(f"Location not found for courier {chat_id}: {e}")
+            await bot.send_message(admin_chat_id, text)
+        except Exception as e:
+            logger.error(f"Failed to generate location redirect for courier {chat_id}: {e}", exc_info=True)
+            # Если не удалось создать редирект, отправляем сообщение без кнопки
+            await bot.send_message(admin_chat_id, text)
     
     await call.answer()
 
-@router.callback_query(F.data.startswith("admin:location:"))
-async def cb_courier_location(call: CallbackQuery):
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    if not await is_super_admin(call.from_user.id):
-        await call.answer("❌ Доступ запрещен", show_alert=True)
-        return
-    
-    chat_id = int(call.data.split(":", 2)[2])
-    db = await get_db()
-    
-    # Ищем последнюю локацию курьера
-    last_location = await db.locations.find_one(
-        {"chat_id": chat_id},
-        sort=[("timestamp_ns", -1)]
-    )
-    
-    if not last_location:
-        await call.answer("📍 Локация не найдена", show_alert=True)
-        return
-    
-    lat = last_location.get("lat")
-    lon = last_location.get("lon")
-    
-    if not lat or not lon:
-        await call.answer("📍 Координаты не найдены", show_alert=True)
-        return
-    
-    # Формируем короткую ссылку на Google Maps
-    maps_url = f"https://maps.google.com/?q={lat},{lon}"
-    
-    await call.answer(maps_url, show_alert=True)
 
 @router.callback_query(F.data == "admin:broadcast")
 async def cb_broadcast(call: CallbackQuery):

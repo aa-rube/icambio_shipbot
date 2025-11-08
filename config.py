@@ -30,6 +30,10 @@ PHOTO_WAIT_TTL = int(os.getenv("PHOTO_WAIT_TTL", str(10 * 60)))   # 10 minutes
 ORDER_LOCK_TTL = int(os.getenv("ORDER_LOCK_TTL", str(30)))        # 30 seconds
 LIVE_LOCATION_DURATION = int(os.getenv("LIVE_LOCATION_DURATION", str(8 * 60 * 60)))  # 8 hours
 LOCATION_REQUEST_INTERVAL = int(os.getenv("LOCATION_REQUEST_INTERVAL", str(20)))  # 20 seconds
+LOCATION_REDIRECT_TTL = int(os.getenv("LOCATION_REDIRECT_TTL", str(24 * 60 * 60)))  # 24 hours
+
+# API Base URL for redirects
+API_BASE_URL = os.getenv("API_BASE_URL", "https://icambio-test-odoo.setrealtora.ru")
 
 # Manager
 MANAGER_CHAT_ID = int(os.getenv("MANAGER_CHAT_ID", "0"))
