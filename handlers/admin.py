@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from db.mongo import get_db
-from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb
+from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb
 
 router = Router()
 
@@ -219,6 +219,133 @@ async def cb_delete_user(call: CallbackQuery):
             reply_markup=admin_main_kb()
         )
     await call.answer()
+
+@router.callback_query(F.data == "admin:on_shift")
+async def cb_on_shift_couriers(call: CallbackQuery):
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    db = await get_db()
+    from datetime import datetime, timezone
+    
+    # Получаем всех курьеров на смене
+    couriers = await db.couriers.find({"is_on_shift": True}).to_list(1000)
+    
+    if not couriers:
+        await call.message.edit_text(
+            "🚚 Курьеры на смене\n\nНет курьеров на смене",
+            reply_markup=back_to_admin_kb()
+        )
+        await call.answer()
+        return
+    
+    # Отправляем сообщение с кнопкой "Назад"
+    await call.message.edit_text(
+        "🚚 Курьеры на смене",
+        reply_markup=back_to_admin_kb()
+    )
+    
+    # Для каждого курьера формируем отдельное сообщение
+    now = datetime.now(timezone.utc)
+    start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    
+    for courier in couriers:
+        chat_id = courier.get("tg_chat_id")
+        name = courier.get("name", "Unknown")
+        username = courier.get("username")
+        username_text = f"@{username}" if username else ""
+        
+        # Статистика заказов за сегодня
+        total_today = await db.couriers_deliveries.count_documents({
+            "courier_tg_chat_id": chat_id,
+            "created_at": {"$gte": start_today.isoformat()}
+        })
+        
+        delivered_today = await db.couriers_deliveries.count_documents({
+            "courier_tg_chat_id": chat_id,
+            "status": "done",
+            "created_at": {"$gte": start_today.isoformat()}
+        })
+        
+        waiting_orders = await db.couriers_deliveries.count_documents({
+            "courier_tg_chat_id": chat_id,
+            "status": {"$in": ["waiting", "in_transit"]}
+        })
+        
+        # Определяем статус курьера
+        in_transit_order = await db.couriers_deliveries.find_one({
+            "courier_tg_chat_id": chat_id,
+            "status": "in_transit"
+        })
+        
+        if in_transit_order:
+            status_text = f"В пути ({in_transit_order.get('external_id', 'N/A')})"
+        elif waiting_orders > 0:
+            status_text = "Есть заказы"
+        else:
+            status_text = "Нет заказов"
+        
+        # Время начала смены
+        shift_started_at = courier.get("shift_started_at")
+        shift_time_text = "Не указано"
+        if shift_started_at:
+            try:
+                shift_dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
+                shift_time_text = shift_dt.strftime("%H:%M")
+            except:
+                shift_time_text = shift_started_at
+        
+        text = (
+            f"👤 {name} {username_text}\n\n"
+            f"Статус: {status_text}\n\n"
+            f"Заказы:\n"
+            f"Всего: {total_today}\n"
+            f"Доставлено: {delivered_today}\n"
+            f"Ожидают: {waiting_orders}\n\n"
+            f"Вышел на смену: {shift_time_text}"
+        )
+        
+        await call.message.answer(text, reply_markup=courier_location_kb(chat_id))
+    
+    await call.answer()
+
+@router.callback_query(F.data.startswith("admin:location:"))
+async def cb_courier_location(call: CallbackQuery):
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    chat_id = int(call.data.split(":", 2)[2])
+    db = await get_db()
+    
+    # Ищем последнюю локацию курьера
+    last_location = await db.locations.find_one(
+        {"chat_id": chat_id},
+        sort=[("timestamp_ns", -1)]
+    )
+    
+    if not last_location:
+        await call.answer("📍 Локация не найдена", show_alert=True)
+        return
+    
+    lat = last_location.get("lat")
+    lon = last_location.get("lon")
+    
+    if not lat or not lon:
+        await call.answer("📍 Координаты не найдены", show_alert=True)
+        return
+    
+    # Формируем короткую ссылку на Google Maps
+    maps_url = f"https://maps.google.com/?q={lat},{lon}"
+    
+    await call.answer(maps_url, show_alert=True)
 
 @router.callback_query(F.data == "admin:broadcast")
 async def cb_broadcast(call: CallbackQuery):

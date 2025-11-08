@@ -2,8 +2,11 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 
 def admin_main_kb() -> InlineKeyboardMarkup:
     kb = [
-        [InlineKeyboardButton(text="➕ Добавить курьера", callback_data="admin:add_user")],
-        [InlineKeyboardButton(text="➖ Удалить курьера", callback_data="admin:del_user")],
+        [
+            InlineKeyboardButton(text="➕ Добавить курьера", callback_data="admin:add_user"),
+            InlineKeyboardButton(text="➖ Удалить курьера", callback_data="admin:del_user")
+        ],
+        [InlineKeyboardButton(text="🚚 Курьеры на смене", callback_data="admin:on_shift")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin:broadcast")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
@@ -52,4 +55,9 @@ def broadcast_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🟢 На смене", callback_data="admin:bc:on_shift")],
         [InlineKeyboardButton(text="🔴 Не на смене", callback_data="admin:bc:off_shift")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin:back")]
+    ])
+
+def courier_location_kb(chat_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:location:{chat_id}")]
     ])

@@ -121,3 +121,4 @@ sudo -u icambio /opt/venvs/shipbot/bin/python /home/icambio/icambio/icambio_ship
 
 Хочешь, я сделаю короткий bash-скрипт (`deploy_shipbot.sh`), который автоматизирует обновление и перезапуск этой схемы одной командой (`bash deploy_shipbot.sh`)?
 
+
