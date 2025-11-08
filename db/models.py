@@ -78,4 +78,4 @@ class Action:
     async def log(db, user_id: int, action_type: str, **kwargs):
         """Быстрое логирование действия"""
         action = Action.create(user_id, action_type, **kwargs)
-        await db.actions.insert_one(action)
+        await db.ship_bot_user_action.insert_one(action)

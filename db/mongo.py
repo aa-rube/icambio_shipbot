@@ -22,10 +22,10 @@ async def init_indexes():
     await db.couriers_deliveries.create_index([("status", ASCENDING)])
     await db.couriers_deliveries.create_index([("created_at", ASCENDING)])
     # Actions
-    await db.actions.create_index([("user_id", ASCENDING)])
-    await db.actions.create_index([("action_type", ASCENDING)])
-    await db.actions.create_index([("timestamp", ASCENDING)])
-    await db.actions.create_index([("order_id", ASCENDING)])
+    await db.ship_bot_user_action.create_index([("user_id", ASCENDING)])
+    await db.ship_bot_user_action.create_index([("action_type", ASCENDING)])
+    await db.ship_bot_user_action.create_index([("timestamp", ASCENDING)])
+    await db.ship_bot_user_action.create_index([("order_id", ASCENDING)])
     # Locations
     await db.locations.create_index([("chat_id", ASCENDING), ("date", ASCENDING), ("shift_id", ASCENDING)])
     await db.locations.create_index([("timestamp_ns", DESCENDING)])

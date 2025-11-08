@@ -258,7 +258,7 @@ python bot.py
 }
 ```
 
-**actions:**
+**ship_bot_user_action:**
 ```json
 {
   "user_id": 123456789,
