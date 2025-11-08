@@ -27,6 +27,8 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
         logger.warning("ODOO_LOGIN or ODOO_API_KEY not configured")
         return None
     
+    # Формат запроса для Odoo JSON-RPC API (новый формат: /web/dataset/call_kw)
+    # Не требует параметра service, используется прямой формат
     payload = {
         "jsonrpc": "2.0",
         "method": method,
