@@ -28,12 +28,14 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
         logger.warning("ODOO_LOGIN or ODOO_API_KEY not configured")
         return None
     
-    # Формат запроса для Odoo JSON-RPC API (новый формат: /web/dataset/call_kw)
-    # Не требует параметра service, использует API ключ через Basic Auth
+    # Формат запроса для Odoo JSON-RPC API
+    # Использует API ключ через Basic Auth
+    # Добавляем service для совместимости с некоторыми версиями Odoo
     payload = {
         "jsonrpc": "2.0",
         "method": method,
         "params": {
+            "service": "object",  # Требуется для некоторых версий Odoo
             "model": model,
             "method": method_name,
             "args": args,
@@ -87,8 +89,8 @@ async def create_courier(name: str, courier_tg_chat_id: str, phone: Optional[str
     if phone:
         courier_data["phone"] = phone
     
-    # В новом формате /web/dataset/call_kw аргументы для create передаются как [{...}]
-    result = await odoo_call("call", "courier.person", "create", [courier_data])
+    # В старом формате /jsonrpc аргументы для create должны быть в двойном массиве [[{...}]]
+    result = await odoo_call("call", "courier.person", "create", [[courier_data]])
     
     if result:
         logger.info(f"Courier created in Odoo with ID: {result}")
