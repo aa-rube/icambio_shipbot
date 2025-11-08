@@ -144,7 +144,8 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
         f"ID: {user_id}\n"
         f"Имя: {full_name}\n"
         f"{username_text}"
-        f"{odoo_status}"
+        f"{odoo_status}",
+        reply_markup=admin_main_kb()
     )
     await state.clear()
 
