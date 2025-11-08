@@ -8,6 +8,12 @@ logger = logging.getLogger(__name__)
 # Кэш для UID пользователя
 _odoo_uid_cache = None
 
+def clear_odoo_uid_cache():
+    """Очищает кэш UID пользователя Odoo (полезно при ошибках аутентификации)"""
+    global _odoo_uid_cache
+    _odoo_uid_cache = None
+    logger.debug("Odoo UID cache cleared")
+
 async def get_odoo_uid() -> Optional[int]:
     """Получает UID пользователя через аутентификацию с API ключом"""
     global _odoo_uid_cache
@@ -19,22 +25,28 @@ async def get_odoo_uid() -> Optional[int]:
         return None
     
     try:
-        # Аутентификация через /web/session/authenticate с API ключом
-        auth_url = ODOO_URL.replace("/jsonrpc", "/web/session/authenticate")
+        # Аутентификация через JSON-RPC /jsonrpc endpoint с методом authenticate
+        # Используем тот же URL что и для обычных вызовов
+        # Для старого формата JSON-RPC params должен быть массивом [service, method, args]
         auth_payload = {
             "jsonrpc": "2.0",
             "method": "call",
             "params": {
-                "db": ODOO_DB or None,  # Если не указано, Odoo определит из сессии
-                "login": ODOO_LOGIN,
-                "password": ODOO_API_KEY  # API ключ используется как пароль
+                "service": "common",
+                "method": "authenticate",
+                "args": [
+                    ODOO_DB or "",  # database name (пустая строка если не указано)
+                    ODOO_LOGIN,     # login
+                    ODOO_API_KEY,   # password (API ключ)
+                    {}              # user agent env (пустой dict)
+                ]
             },
             "id": 1
         }
         
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                auth_url,
+                ODOO_URL,
                 json=auth_payload,
                 headers={"Content-Type": "application/json"},
                 timeout=aiohttp.ClientTimeout(total=10)
@@ -42,16 +54,39 @@ async def get_odoo_uid() -> Optional[int]:
                 if response.status == 200:
                     result = await response.json()
                     if "error" in result:
-                        logger.error(f"Odoo authentication error: {result['error']}")
+                        error_data = result.get("error", {})
+                        error_message = error_data.get("message", "Unknown error")
+                        error_code = error_data.get("code", 0)
+                        logger.error(f"Odoo authentication error: code={error_code}, message={error_message}")
+                        
+                        # Если ошибка аутентификации, очищаем кэш чтобы можно было повторить попытку
+                        if error_code == 200 or "Access Denied" in str(error_message):
+                            _odoo_uid_cache = None
+                            logger.warning("Cleared Odoo UID cache due to authentication failure")
+                        
                         return None
-                    uid = result.get("result", {}).get("uid")
-                    if uid:
+                    uid = result.get("result")
+                    if uid and isinstance(uid, int):
                         _odoo_uid_cache = uid
                         logger.info(f"Odoo authentication successful with API key, UID: {uid}")
                         return uid
+                    elif uid is False:
+                        # False означает что аутентификация не удалась
+                        logger.warning("Odoo authentication returned False - invalid credentials")
+                        _odoo_uid_cache = None
+                        return None
+                    else:
+                        logger.warning(f"Odoo authentication returned invalid UID: {uid}")
+                        return None
+                else:
+                    response_text = await response.text()
+                    logger.warning(f"Odoo authentication returned status {response.status}: {response_text}")
+                    return None
         return None
     except Exception as e:
         logger.error(f"Error authenticating with Odoo: {e}", exc_info=True)
+        # Очищаем кэш при ошибке чтобы можно было повторить попытку
+        _odoo_uid_cache = None
         return None
 
 async def odoo_call(method: str, model: str, method_name: str, args: list, kwargs: dict = None) -> Optional[Any]:
@@ -80,7 +115,7 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
     # Получаем UID через аутентификацию с API ключом
     uid = await get_odoo_uid()
     if not uid:
-        logger.warning("Failed to get Odoo UID")
+        logger.warning("Failed to get Odoo UID - authentication may have failed")
         return None
     
     # Формат запроса для Odoo JSON-RPC API (старый формат: /jsonrpc)
@@ -118,11 +153,20 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
                 if response.status == 200:
                     result = await response.json()
                     if "error" in result:
-                        logger.error(f"Odoo API error: {result['error']}")
+                        error_data = result.get("error", {})
+                        error_message = error_data.get("message", "Unknown error")
+                        error_code = error_data.get("code", 0)
+                        logger.error(f"Odoo API error: code={error_code}, message={error_message}")
+                        
+                        # Если ошибка связана с аутентификацией, очищаем кэш
+                        if error_code == 200 or "Access Denied" in str(error_message) or "authentication" in str(error_message).lower():
+                            clear_odoo_uid_cache()
+                        
                         return None
                     return result.get("result")
                 else:
-                    logger.warning(f"Odoo API returned status {response.status}")
+                    response_text = await response.text()
+                    logger.warning(f"Odoo API returned status {response.status}: {response_text}")
                     return None
     except Exception as e:
         logger.error(f"Error calling Odoo API: {e}", exc_info=True)
