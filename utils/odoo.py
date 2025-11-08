@@ -121,13 +121,14 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
     # Формат запроса для Odoo JSON-RPC API (старый формат: /jsonrpc)
     # В старом формате params должен быть массивом [service, method, args]
     # где args = [db, uid, passwd, model, method, args, kwargs]
+    # Используем массивный формат для совместимости со старым JSON-RPC API
     payload = {
         "jsonrpc": "2.0",
         "method": method,
-        "params": {
-            "service": "object",  # Обязательный параметр service
-            "method": "execute_kw",  # Используем execute_kw
-            "args": [
+        "params": [
+            "object",  # service
+            "execute_kw",  # method
+            [
                 ODOO_DB or "",  # database name (пустая строка если не указано)
                 uid,  # user id
                 ODOO_API_KEY,  # API ключ используется как пароль
@@ -136,7 +137,7 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
                 args,  # args
                 kwargs or {}  # kwargs
             ]
-        },
+        ],
         "id": 1
     }
     
@@ -156,7 +157,13 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
                         error_data = result.get("error", {})
                         error_message = error_data.get("message", "Unknown error")
                         error_code = error_data.get("code", 0)
-                        logger.error(f"Odoo API error: code={error_code}, message={error_message}")
+                        error_data_full = error_data.get("data", {})
+                        error_name = error_data_full.get("name", "")
+                        error_debug = error_data_full.get("debug", "")
+                        
+                        logger.error(f"Odoo API error: code={error_code}, message={error_message}, name={error_name}")
+                        if error_debug:
+                            logger.debug(f"Odoo API error debug: {error_debug[:500]}")  # Limit debug output
                         
                         # Если ошибка связана с аутентификацией, очищаем кэш
                         if error_code == 200 or "Access Denied" in str(error_message) or "authentication" in str(error_message).lower():
