@@ -1,5 +1,6 @@
 import aiohttp
 import logging
+import json
 from typing import Dict, Any, Optional
 from config import ODOO_URL, ODOO_DB, ODOO_LOGIN, ODOO_API_KEY
 
@@ -27,7 +28,6 @@ async def get_odoo_uid() -> Optional[int]:
     try:
         # Аутентификация через JSON-RPC /jsonrpc endpoint с методом authenticate
         # Используем тот же URL что и для обычных вызовов
-        # Для старого формата JSON-RPC params должен быть массивом [service, method, args]
         auth_payload = {
             "jsonrpc": "2.0",
             "method": "call",
@@ -44,6 +44,9 @@ async def get_odoo_uid() -> Optional[int]:
             "id": 1
         }
         
+        logger.info(f"[Odoo Auth] Request URL: {ODOO_URL}")
+        logger.info(f"[Odoo Auth] Request payload: {json.dumps(auth_payload, indent=2, ensure_ascii=False)}")
+        
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 ODOO_URL,
@@ -51,13 +54,29 @@ async def get_odoo_uid() -> Optional[int]:
                 headers={"Content-Type": "application/json"},
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as response:
+                response_text = await response.text()
+                logger.info(f"[Odoo Auth] Response status: {response.status}")
+                logger.info(f"[Odoo Auth] Response body: {response_text}")
+                
                 if response.status == 200:
-                    result = await response.json()
+                    try:
+                        result = json.loads(response_text)
+                        logger.info(f"[Odoo Auth] Response JSON: {json.dumps(result, indent=2, ensure_ascii=False)}")
+                    except Exception as e:
+                        logger.error(f"[Odoo Auth] Failed to parse JSON response: {e}, body: {response_text}")
+                        return None
+                    
                     if "error" in result:
                         error_data = result.get("error", {})
                         error_message = error_data.get("message", "Unknown error")
                         error_code = error_data.get("code", 0)
-                        logger.error(f"Odoo authentication error: code={error_code}, message={error_message}")
+                        error_data_full = error_data.get("data", {})
+                        error_name = error_data_full.get("name", "") if isinstance(error_data_full, dict) else ""
+                        error_debug = error_data_full.get("debug", "") if isinstance(error_data_full, dict) else ""
+                        
+                        logger.error(f"[Odoo Auth] Error: code={error_code}, message={error_message}, name={error_name}")
+                        if error_debug:
+                            logger.error(f"[Odoo Auth] Error debug traceback:\n{error_debug}")
                         
                         # Если ошибка аутентификации, очищаем кэш чтобы можно было повторить попытку
                         if error_code == 200 or "Access Denied" in str(error_message):
@@ -68,23 +87,22 @@ async def get_odoo_uid() -> Optional[int]:
                     uid = result.get("result")
                     if uid and isinstance(uid, int):
                         _odoo_uid_cache = uid
-                        logger.info(f"Odoo authentication successful with API key, UID: {uid}")
+                        logger.info(f"[Odoo Auth] Authentication successful, UID: {uid}")
                         return uid
                     elif uid is False:
                         # False означает что аутентификация не удалась
-                        logger.warning("Odoo authentication returned False - invalid credentials")
+                        logger.warning("[Odoo Auth] Authentication returned False - invalid credentials")
                         _odoo_uid_cache = None
                         return None
                     else:
-                        logger.warning(f"Odoo authentication returned invalid UID: {uid}")
+                        logger.warning(f"[Odoo Auth] Invalid UID returned: {uid}")
                         return None
                 else:
-                    response_text = await response.text()
-                    logger.warning(f"Odoo authentication returned status {response.status}: {response_text}")
+                    logger.warning(f"[Odoo Auth] HTTP error status {response.status}, body: {response_text}")
                     return None
         return None
     except Exception as e:
-        logger.error(f"Error authenticating with Odoo: {e}", exc_info=True)
+        logger.error(f"[Odoo Auth] Exception during authentication: {e}", exc_info=True)
         # Очищаем кэш при ошибке чтобы можно было повторить попытку
         _odoo_uid_cache = None
         return None
@@ -119,16 +137,14 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
         return None
     
     # Формат запроса для Odoo JSON-RPC API (старый формат: /jsonrpc)
-    # В старом формате params должен быть массивом [service, method, args]
-    # где args = [db, uid, passwd, model, method, args, kwargs]
-    # Используем массивный формат для совместимости со старым JSON-RPC API
+    # Используем объектный формат для params, как в аутентификации
     payload = {
         "jsonrpc": "2.0",
         "method": method,
-        "params": [
-            "object",  # service
-            "execute_kw",  # method
-            [
+        "params": {
+            "service": "object",
+            "method": "execute_kw",
+            "args": [
                 ODOO_DB or "",  # database name (пустая строка если не указано)
                 uid,  # user id
                 ODOO_API_KEY,  # API ключ используется как пароль
@@ -137,9 +153,13 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
                 args,  # args
                 kwargs or {}  # kwargs
             ]
-        ],
+        },
         "id": 1
     }
+    
+    logger.info(f"[Odoo API] Calling: model={model}, method={method_name}")
+    logger.info(f"[Odoo API] Request URL: {ODOO_URL}")
+    logger.info(f"[Odoo API] Request payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -151,32 +171,44 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
                 headers={"Content-Type": "application/json"},
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as response:
+                response_text = await response.text()
+                logger.info(f"[Odoo API] Response status: {response.status}")
+                logger.info(f"[Odoo API] Response body: {response_text}")
+                
                 if response.status == 200:
-                    result = await response.json()
+                    try:
+                        result = json.loads(response_text)
+                        logger.info(f"[Odoo API] Response JSON: {json.dumps(result, indent=2, ensure_ascii=False)}")
+                    except Exception as e:
+                        logger.error(f"[Odoo API] Failed to parse JSON response: {e}, body: {response_text}")
+                        return None
+                    
                     if "error" in result:
                         error_data = result.get("error", {})
                         error_message = error_data.get("message", "Unknown error")
                         error_code = error_data.get("code", 0)
                         error_data_full = error_data.get("data", {})
-                        error_name = error_data_full.get("name", "")
-                        error_debug = error_data_full.get("debug", "")
+                        error_name = error_data_full.get("name", "") if isinstance(error_data_full, dict) else ""
+                        error_debug = error_data_full.get("debug", "") if isinstance(error_data_full, dict) else ""
                         
-                        logger.error(f"Odoo API error: code={error_code}, message={error_message}, name={error_name}")
+                        logger.error(f"[Odoo API] Error: code={error_code}, message={error_message}, name={error_name}")
                         if error_debug:
-                            logger.debug(f"Odoo API error debug: {error_debug[:500]}")  # Limit debug output
+                            logger.error(f"[Odoo API] Error debug traceback:\n{error_debug}")
                         
                         # Если ошибка связана с аутентификацией, очищаем кэш
                         if error_code == 200 or "Access Denied" in str(error_message) or "authentication" in str(error_message).lower():
                             clear_odoo_uid_cache()
                         
                         return None
-                    return result.get("result")
+                    
+                    api_result = result.get("result")
+                    logger.info(f"[Odoo API] Success, result: {api_result}")
+                    return api_result
                 else:
-                    response_text = await response.text()
-                    logger.warning(f"Odoo API returned status {response.status}: {response_text}")
+                    logger.warning(f"[Odoo API] HTTP error status {response.status}, body: {response_text}")
                     return None
     except Exception as e:
-        logger.error(f"Error calling Odoo API: {e}", exc_info=True)
+        logger.error(f"[Odoo API] Exception during API call: {e}", exc_info=True)
         return None
 
 async def create_courier(name: str, courier_tg_chat_id: str, phone: Optional[str] = None, is_online: bool = False) -> Optional[int]:
