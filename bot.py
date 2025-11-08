@@ -4,7 +4,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import start, shift, orders, photo, errors, admin, location
 from utils.logger import setup_logging
-from utils.location_tracker import LocationTracker
 from db.mongo import init_indexes
 from config import BOT_TOKEN
 
@@ -23,15 +22,10 @@ async def main():
     dp.include_router(photo.router)
     dp.include_router(errors.router)
 
-    # Запускаем отслеживание локации
-    location_tracker = LocationTracker(bot)
-    await location_tracker.start()
-
     try:
-        await dp.start_polling(bot)
+        # Добавляем edited_message в allowed_updates для обработки лайв-локации
+        await dp.start_polling(bot, allowed_updates=["message", "edited_message", "callback_query"])
     finally:
-        # Останавливаем отслеживание локации при остановке бота
-        await location_tracker.stop()
         await bot.session.close()
 
 if __name__ == "__main__":
