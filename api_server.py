@@ -16,8 +16,8 @@ bot = Bot(BOT_TOKEN)
 
 @app.on_event("startup")
 async def on_startup():
+    # Инициализация уже выполняется в bot.py, здесь только логирование
     setup_logging()
-    await init_indexes()
 
 @app.post("/api/orders")
 async def create_order(payload: IncomingOrder):
