@@ -112,5 +112,5 @@ def get_location_redirect_url(key: str) -> str:
     Returns:
         Полный URL для редиректа
     """
-    return f"{API_BASE_URL}/location/{key}"
+    return f"{API_BASE_URL}/api/location/{key}"
 
