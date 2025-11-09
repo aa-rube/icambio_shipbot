@@ -86,12 +86,12 @@ async def cmd_orders(message: Message):
     
     chat_id = message.chat.id
     user_id = message.from_user.id
-    logger.info(f"[ORDERS] User {user_id} (chat_id: {chat_id}) executed /orders command")
+    logger.info(f"[ORDERS] 📦 Команда /orders от пользователя {user_id} (chat_id: {chat_id})")
     
     try:
         await show_active_orders(chat_id, message)
     except Exception as e:
-        logger.error(f"[ORDERS] Error in cmd_orders for user {user_id} (chat_id: {chat_id}): {e}", exc_info=True)
+        logger.error(f"[ORDERS] ❌ Ошибка в cmd_orders для пользователя {user_id} (chat_id: {chat_id}): {e}", exc_info=True)
         await message.answer("Произошла ошибка при загрузке заказов")
 
 @router.callback_query(F.data == "orders:list")
@@ -101,13 +101,13 @@ async def cb_my_orders(call: CallbackQuery):
     
     chat_id = call.message.chat.id
     user_id = call.from_user.id
-    logger.info(f"[ORDERS] User {user_id} (chat_id: {chat_id}) clicked 'Мои заказы' button")
+    logger.info(f"[ORDERS] 📦 Нажата кнопка 'Мои заказы' пользователем {user_id} (chat_id: {chat_id})")
     
     try:
         await show_active_orders(chat_id, call.message)
         await call.answer()
     except Exception as e:
-        logger.error(f"[ORDERS] Error in cb_my_orders for user {user_id} (chat_id: {chat_id}): {e}", exc_info=True)
+        logger.error(f"[ORDERS] ❌ Ошибка в cb_my_orders для пользователя {user_id} (chat_id: {chat_id}): {e}", exc_info=True)
         await call.answer("Произошла ошибка при загрузке заказов", show_alert=True)
 
 async def show_waiting_orders(chat_id: int, message: Message):
@@ -115,22 +115,24 @@ async def show_waiting_orders(chat_id: int, message: Message):
     import logging
     logger = logging.getLogger(__name__)
     
-    logger.info(f"[ORDERS] show_waiting_orders called for chat_id: {chat_id}")
+    logger.info(f"[ORDERS] 🔍 Поиск ожидающих заказов для chat_id: {chat_id}")
     
     db = await get_db()
     
     # Проверяем заказы с разными типами данных
+    logger.debug(f"[ORDERS] 🔍 Проверка заказов с типом int для chat_id: {chat_id}")
     orders_as_int = await db.couriers_deliveries.count_documents({"courier_tg_chat_id": int(chat_id), "status": "waiting"})
     
     # Определяем правильный тип для запроса
     search_chat_id = int(chat_id) if orders_as_int > 0 else chat_id
+    logger.debug(f"[ORDERS] 📊 Используется search_chat_id: {search_chat_id} (type: {type(search_chat_id).__name__})")
     
     # Логируем запрос к БД
     query = {
         "courier_tg_chat_id": search_chat_id,
         "status": "waiting"
     }
-    logger.debug(f"[ORDERS] MongoDB query for waiting orders: {query}")
+    logger.debug(f"[ORDERS] 🔍 MongoDB запрос для ожидающих заказов: {query}")
     
     cursor = db.couriers_deliveries.find(query).sort("priority", -1).sort("created_at", 1)
     
@@ -139,52 +141,54 @@ async def show_waiting_orders(chat_id: int, message: Message):
     async for order in cursor:
         found = True
         order_count += 1
-        logger.info(f"[ORDERS] Found waiting order #{order_count}: external_id={order.get('external_id')}, priority={order.get('priority')}")
+        logger.info(f"[ORDERS] ✅ Найден ожидающий заказ #{order_count}: external_id={order.get('external_id')}, priority={order.get('priority')}")
         
         text = format_order_text(order)
         await message.answer(text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
-        logger.debug(f"[ORDERS] Sent waiting order {order.get('external_id')} to chat_id {chat_id}")
+        logger.debug(f"[ORDERS] 📤 Отправлен ожидающий заказ {order.get('external_id')} в chat_id {chat_id}")
     
     if not found:
-        logger.info(f"[ORDERS] No waiting orders found for chat_id {chat_id}")
+        logger.info(f"[ORDERS] ⚠️ Ожидающих заказов не найдено для chat_id {chat_id}")
         await message.answer("Нет активных заказов.")
     else:
-        logger.info(f"[ORDERS] Successfully sent {order_count} waiting order(s) to chat_id {chat_id}")
+        logger.info(f"[ORDERS] ✅ Успешно отправлено {order_count} ожидающих заказов в chat_id {chat_id}")
 
 async def show_active_orders(chat_id: int, message: Message):
     import logging
     logger = logging.getLogger(__name__)
     
-    logger.info(f"[ORDERS] show_active_orders called for chat_id: {chat_id} (type: {type(chat_id).__name__})")
+    logger.info(f"[ORDERS] 🔍 Поиск активных заказов для chat_id: {chat_id} (type: {type(chat_id).__name__})")
     
     db = await get_db()
     
     # Проверяем, есть ли заказы с таким courier_tg_chat_id (без фильтра по статусу)
     all_orders_count = await db.couriers_deliveries.count_documents({"courier_tg_chat_id": chat_id})
-    logger.info(f"[ORDERS] Total orders for chat_id {chat_id}: {all_orders_count}")
+    logger.debug(f"[ORDERS] 📊 Всего заказов для chat_id {chat_id}: {all_orders_count}")
     
     # Проверяем заказы с разными типами данных
     # Пробуем найти заказы как с числом, так и со строкой
+    logger.debug(f"[ORDERS] 🔍 Проверка заказов с типом int для chat_id: {chat_id}")
     orders_as_int = await db.couriers_deliveries.count_documents({"courier_tg_chat_id": int(chat_id)})
-    logger.info(f"[ORDERS] Orders with courier_tg_chat_id as int({chat_id}): {orders_as_int}")
+    logger.debug(f"[ORDERS] 📊 Заказов с courier_tg_chat_id как int({chat_id}): {orders_as_int}")
     
     # Определяем правильный тип для запроса
     # Если заказы найдены с int, используем int, иначе используем исходный тип
     search_chat_id = int(chat_id) if orders_as_int > 0 else chat_id
+    logger.debug(f"[ORDERS] 📊 Используется search_chat_id: {search_chat_id} (type: {type(search_chat_id).__name__})")
     
     # Получаем пример заказа для отладки
     sample_order = await db.couriers_deliveries.find_one({"courier_tg_chat_id": search_chat_id})
     if sample_order:
-        logger.debug(f"[ORDERS] Sample order found: courier_tg_chat_id={sample_order.get('courier_tg_chat_id')} (type: {type(sample_order.get('courier_tg_chat_id')).__name__}), status={sample_order.get('status')}, external_id={sample_order.get('external_id')}")
+        logger.debug(f"[ORDERS] 📋 Пример заказа найден: courier_tg_chat_id={sample_order.get('courier_tg_chat_id')} (type: {type(sample_order.get('courier_tg_chat_id')).__name__}), status={sample_order.get('status')}, external_id={sample_order.get('external_id')}")
     else:
-        logger.warning(f"[ORDERS] No orders found for chat_id {chat_id} (tried as {type(search_chat_id).__name__})")
+        logger.warning(f"[ORDERS] ⚠️ Заказы не найдены для chat_id {chat_id} (пробовали как {type(search_chat_id).__name__})")
     
     # Логируем запрос к БД
     query = {
         "courier_tg_chat_id": search_chat_id,
         "status": {"$in": ["waiting", "in_transit"]}
     }
-    logger.debug(f"[ORDERS] MongoDB query: {query}")
+    logger.debug(f"[ORDERS] 🔍 MongoDB запрос: {query}")
     
     cursor = db.couriers_deliveries.find(query).sort("priority", -1).sort("created_at", 1)
     
@@ -193,50 +197,54 @@ async def show_active_orders(chat_id: int, message: Message):
     async for order in cursor:
         found = True
         order_count += 1
-        logger.info(f"[ORDERS] Found order #{order_count}: external_id={order.get('external_id')}, status={order.get('status')}, priority={order.get('priority')}")
+        logger.info(f"[ORDERS] ✅ Найден активный заказ #{order_count}: external_id={order.get('external_id')}, status={order.get('status')}, priority={order.get('priority')}")
         
         text = format_order_text(order)
         if order["status"] == "waiting":
             await message.answer(text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
-            logger.debug(f"[ORDERS] Sent waiting order {order.get('external_id')} to chat_id {chat_id}")
+            logger.debug(f"[ORDERS] 📤 Отправлен ожидающий заказ {order.get('external_id')} в chat_id {chat_id}")
         elif order["status"] == "in_transit":
             await message.answer(text, parse_mode="HTML", reply_markup=in_transit_kb(order["external_id"], order))
-            logger.debug(f"[ORDERS] Sent in_transit order {order.get('external_id')} to chat_id {chat_id}")
+            logger.debug(f"[ORDERS] 📤 Отправлен заказ в пути {order.get('external_id')} в chat_id {chat_id}")
     
     if not found:
-        logger.warning(f"[ORDERS] No active orders found for chat_id {chat_id}. Total orders: {all_orders_count}, Orders as int: {orders_as_int}")
+        logger.warning(f"[ORDERS] ⚠️ Активных заказов не найдено для chat_id {chat_id}. Всего заказов: {all_orders_count}, Заказов как int: {orders_as_int}")
         await message.answer("Нет активных заказов.")
     else:
-        logger.info(f"[ORDERS] Successfully sent {order_count} active order(s) to chat_id {chat_id}")
+        logger.info(f"[ORDERS] ✅ Успешно отправлено {order_count} активных заказов в chat_id {chat_id}")
 
 @router.callback_query(F.data.startswith("order:go:"))
 async def cb_order_go(call: CallbackQuery, bot: Bot):
     import logging
     logger = logging.getLogger(__name__)
     external_id = call.data.split(":", 2)[2]
-    logger.info(f"User {call.from_user.id} accepting order {external_id}")
+    logger.info(f"[ORDERS] 🚚 Пользователь {call.from_user.id} принимает заказ {external_id}")
     
     db = await get_db()
     redis = get_redis()
+    logger.debug(f"[ORDERS] 🔍 Поиск заказа {external_id}")
     order = await db.couriers_deliveries.find_one({"external_id": external_id})
     if not order:
-        logger.warning(f"Order {external_id} not found")
+        logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} не найден")
         await call.answer("Заказ не найден", show_alert=True)
         return
 
     # lock to avoid double accept
     lock_key = f"order:lock:{external_id}"
+    logger.debug(f"[ORDERS] 🔒 Установка блокировки для заказа {external_id}")
     ok = await redis.set(lock_key, "1", ex=ORDER_LOCK_TTL, nx=True)
     if not ok:
+        logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} уже обрабатывается")
         await call.answer("Кто-то уже обрабатывает этот заказ", show_alert=True)
         return
 
+    logger.debug(f"[ORDERS] 💾 Обновление статуса заказа {external_id} на 'in_transit'")
     await db.couriers_deliveries.update_one({"_id": order["_id"]}, {"$set": {"status": "in_transit", "updated_at": utcnow_iso()}})
     order = await db.couriers_deliveries.find_one({"_id": order["_id"]})
     
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_accepted", order_id=external_id)
-    logger.info(f"User {call.from_user.id} accepted order {external_id}")
+    logger.info(f"[ORDERS] ✅ Пользователь {call.from_user.id} принял заказ {external_id}")
     
     # Отправка webhook
     from utils.webhooks import send_webhook, prepare_order_data
@@ -264,15 +272,17 @@ async def cb_order_accept_payment(call: CallbackQuery):
     import logging
     logger = logging.getLogger(__name__)
     external_id = call.data.split(":", 2)[2]
-    logger.info(f"User {call.from_user.id} accepting payment for order {external_id}")
+    logger.info(f"[ORDERS] 💰 Пользователь {call.from_user.id} принимает оплату за заказ {external_id}")
     
     redis = get_redis()
     # Устанавливаем флаг ожидания фотографий оплаты
+    logger.debug(f"[ORDERS] ⏳ Установка флага ожидания фото оплаты для chat_id {call.message.chat.id}")
     await redis.setex(f"courier:payment_photo_wait:{call.message.chat.id}", PHOTO_WAIT_TTL, external_id)
     
     db = await get_db()
     from db.models import Action
     await Action.log(db, call.from_user.id, "payment_accepted", order_id=external_id)
+    logger.debug(f"[ORDERS] 📝 Действие 'payment_accepted' залогировано для заказа {external_id}")
     
     await call.message.answer("💰 Отфотографируйте купюры и отправьте фото в бот")
     await call.answer()
@@ -282,17 +292,20 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     import logging
     logger = logging.getLogger(__name__)
     external_id = call.data.split(":", 2)[2]
-    logger.info(f"User {call.from_user.id} finishing order {external_id} after payment")
+    logger.info(f"[ORDERS] ✅ Пользователь {call.from_user.id} завершает заказ {external_id} после оплаты")
     
     db = await get_db()
     redis = get_redis()
     
+    logger.debug(f"[ORDERS] 🔍 Поиск заказа {external_id}")
     order = await db.couriers_deliveries.find_one({"external_id": external_id})
     if not order:
+        logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} не найден")
         await call.answer("Заказ не найден", show_alert=True)
         return
     
     # Обновляем статус оплаты и статус заказа
+    logger.debug(f"[ORDERS] 💾 Обновление статуса заказа {external_id} на 'done' с оплатой 'PAID'")
     await db.couriers_deliveries.update_one(
         {"external_id": external_id},
         {
@@ -305,6 +318,7 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     )
     
     # Удаляем флаг ожидания фотографий оплаты
+    logger.debug(f"[ORDERS] 🗑️ Удаление флага ожидания фото оплаты для chat_id {call.message.chat.id}")
     await redis.delete(f"courier:payment_photo_wait:{call.message.chat.id}")
     
     # Получаем обновленный заказ для webhook
@@ -312,7 +326,7 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_completed", order_id=external_id, details={"after_payment": True})
-    logger.info(f"User {call.from_user.id} completed order {external_id} after payment")
+    logger.info(f"[ORDERS] ✅ Пользователь {call.from_user.id} завершил заказ {external_id} после оплаты")
     
     # Отправка webhook
     from utils.webhooks import send_webhook, prepare_order_data
@@ -339,24 +353,29 @@ async def cb_order_done(call: CallbackQuery):
     import logging
     logger = logging.getLogger(__name__)
     external_id = call.data.split(":", 2)[2]
-    logger.info(f"User {call.from_user.id} completing order {external_id}")
+    logger.info(f"[ORDERS] ✅ Пользователь {call.from_user.id} завершает заказ {external_id}")
     
     db = await get_db()
+    logger.debug(f"[ORDERS] 🔍 Поиск заказа {external_id}")
     order = await db.couriers_deliveries.find_one({"external_id": external_id})
     if not order:
+        logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} не найден")
         await call.answer("Заказ не найден", show_alert=True)
         return
     
     # Если оплата наличными и статус оплаты "не оплачен", не позволяем завершить заказ
     if order.get("is_cash_payment") and order.get("payment_status") == "NOT_PAID":
+        logger.warning(f"[ORDERS] ⚠️ Попытка завершить заказ {external_id} без оплаты")
         await call.answer("Сначала примите оплату", show_alert=True)
         return
     
     redis = get_redis()
+    logger.debug(f"[ORDERS] ⏳ Установка флага ожидания фото для chat_id {call.message.chat.id}")
     await redis.setex(f"courier:photo_wait:{call.message.chat.id}", PHOTO_WAIT_TTL, external_id)
     
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_completed", order_id=external_id)
+    logger.debug(f"[ORDERS] 📝 Действие 'order_completed' залогировано для заказа {external_id}")
     
     await call.message.answer("📸 Пришли фото подтверждение (чек или доставка)")
     await call.answer()
@@ -366,14 +385,16 @@ async def cb_order_problem(call: CallbackQuery):
     import logging
     logger = logging.getLogger(__name__)
     external_id = call.data.split(":", 2)[2]
-    logger.info(f"User {call.from_user.id} reported problem with order {external_id}")
+    logger.info(f"[ORDERS] ⚠️ Пользователь {call.from_user.id} сообщил о проблеме с заказом {external_id}")
     
     redis = get_redis()
+    logger.debug(f"[ORDERS] ⏳ Установка флага ожидания описания проблемы для chat_id {call.message.chat.id}")
     await redis.setex(f"courier:problem_wait:{call.message.chat.id}", PHOTO_WAIT_TTL, external_id)
     
     db = await get_db()
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_problem", order_id=external_id)
+    logger.debug(f"[ORDERS] 📝 Действие 'order_problem' залогировано для заказа {external_id}")
     
     await call.message.answer(f"⚠ Опиши коротко проблему по заказу {external_id}, чтобы менеджер помог")
     await call.answer()

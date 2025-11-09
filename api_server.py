@@ -55,24 +55,29 @@ async def create_order(payload: IncomingOrder):
     import logging
     logger = logging.getLogger(__name__)
     
-    logger.info(f"[API] Creating order: external_id={payload.external_id}, courier_tg_chat_id={payload.courier_tg_chat_id} (type: {type(payload.courier_tg_chat_id).__name__})")
+    logger.info(f"[API] 📥 Входящий запрос на создание заказа: external_id={payload.external_id}, courier_tg_chat_id={payload.courier_tg_chat_id} (type: {type(payload.courier_tg_chat_id).__name__})")
+    logger.debug(f"[API] 📋 Данные заказа: payment_status={payload.payment_status}, priority={payload.priority}, address={payload.address[:50]}...")
     
     db = await get_db()
     redis = get_redis()
+    logger.debug(f"[API] 🔌 Подключение к БД и Redis установлено")
 
     # Find courier by tg_chat_id
+    logger.debug(f"[API] 🔍 Поиск курьера по tg_chat_id={payload.courier_tg_chat_id}")
     courier = await db.couriers.find_one({"tg_chat_id": payload.courier_tg_chat_id})
     if not courier:
-        logger.warning(f"[API] Courier not found: {payload.courier_tg_chat_id}")
+        logger.warning(f"[API] ⚠️ Курьер не найден: {payload.courier_tg_chat_id}")
         raise HTTPException(status_code=404, detail="Courier not found")
     
-    logger.debug(f"[API] Courier found: _id={courier.get('_id')}, name={courier.get('name')}, tg_chat_id={courier.get('tg_chat_id')}")
+    logger.info(f"[API] ✅ Курьер найден: _id={courier.get('_id')}, name={courier.get('name')}, tg_chat_id={courier.get('tg_chat_id')}")
 
     # Ensure external order id uniqueness (also enforced by unique index)
+    logger.debug(f"[API] 🔍 Проверка уникальности external_id={payload.external_id}")
     existing_order = await db.couriers_deliveries.find_one({"external_id": payload.external_id})
     if existing_order:
-        logger.warning(f"[API] Order with external_id {payload.external_id} already exists")
+        logger.warning(f"[API] ⚠️ Заказ с external_id {payload.external_id} уже существует")
         raise HTTPException(status_code=409, detail="Order with this external_id already exists")
+    logger.debug(f"[API] ✅ external_id уникален")
 
     order_doc = {
         "external_id": payload.external_id,
@@ -101,17 +106,20 @@ async def create_order(payload: IncomingOrder):
         "pay_photo": [],
     }
     
-    logger.debug(f"[API] Order document prepared: courier_tg_chat_id={order_doc['courier_tg_chat_id']} (type: {type(order_doc['courier_tg_chat_id']).__name__})")
+    logger.debug(f"[API] 📝 Документ заказа подготовлен: courier_tg_chat_id={order_doc['courier_tg_chat_id']} (type: {type(order_doc['courier_tg_chat_id']).__name__})")
     
+    logger.debug(f"[API] 💾 Сохранение заказа в БД...")
     res = await db.couriers_deliveries.insert_one(order_doc)
     order_doc["_id"] = res.inserted_id
     
-    logger.info(f"[API] Order created successfully: _id={order_doc['_id']}, external_id={payload.external_id}, courier_tg_chat_id={order_doc['courier_tg_chat_id']}")
+    logger.info(f"[API] ✅ Заказ успешно создан: _id={order_doc['_id']}, external_id={payload.external_id}, courier_tg_chat_id={order_doc['courier_tg_chat_id']}")
 
     # If courier on shift -> push Telegram message
+    logger.debug(f"[API] 🔍 Проверка статуса смены курьера: tg_chat_id={courier['tg_chat_id']}")
     is_on = await redis.get(f"courier:shift:{courier['tg_chat_id']}")
-    logger.debug(f"[API] Courier shift status: is_on={is_on}, tg_chat_id={courier['tg_chat_id']}")
+    logger.debug(f"[API] 📊 Статус смены: is_on={is_on}, tg_chat_id={courier['tg_chat_id']}")
     if is_on == "on":
+        logger.info(f"[API] 🚚 Курьер на смене, отправка уведомления в Telegram...")
         priority_emoji = "🔴" if payload.priority >= 5 else "🟡" if payload.priority >= 3 else "⚪"
         
         text = f"⏳ Статус: Ожидает\n\n"
@@ -143,32 +151,36 @@ async def create_order(payload: IncomingOrder):
                 text += f" | 📊 {payload.source}"
 
         try:
-            logger.info(f"[API] Sending Telegram message to courier {courier['tg_chat_id']} for order {payload.external_id}")
+            logger.debug(f"[API] 📤 Отправка Telegram сообщения курьеру {courier['tg_chat_id']} для заказа {payload.external_id}")
             await bot.send_message(
                 courier["tg_chat_id"],
                 text,
                 parse_mode="HTML",
                 reply_markup=new_order_kb(payload.external_id)
             )
-            logger.info(f"[API] Telegram message sent successfully to courier {courier['tg_chat_id']}")
+            logger.info(f"[API] ✅ Telegram сообщение успешно отправлено курьеру {courier['tg_chat_id']}")
         except Exception as e:
-            logger.error(f"[API] Failed to send Telegram message to courier {courier['tg_chat_id']}: {e}", exc_info=True)
+            logger.error(f"[API] ❌ Ошибка отправки Telegram сообщения курьеру {courier['tg_chat_id']}: {e}", exc_info=True)
             pass
     else:
-        logger.info(f"[API] Courier {courier['tg_chat_id']} is not on shift, skipping Telegram notification")
+        logger.info(f"[API] ⏸️ Курьер {courier['tg_chat_id']} не на смене, уведомление пропущено")
 
-    logger.info(f"[API] Order creation completed: external_id={payload.external_id}, order_id={order_doc['_id']}")
+    logger.info(f"[API] ✅ Создание заказа завершено: external_id={payload.external_id}, order_id={order_doc['_id']}")
     return JSONResponse({"ok": True, "order_id": str(order_doc["_id"]), "external_id": payload.external_id})
 
 @app.patch("/api/orders/{external_id}")
 async def update_order(external_id: str, payload: UpdateOrder):
     import logging
     logger = logging.getLogger(__name__)
+    logger.info(f"[API] 📝 Обновление заказа: external_id={external_id}")
     db = await get_db()
     
+    logger.debug(f"[API] 🔍 Поиск заказа по external_id={external_id}")
     order = await db.couriers_deliveries.find_one({"external_id": external_id})
     if not order:
+        logger.warning(f"[API] ⚠️ Заказ не найден: external_id={external_id}")
         raise HTTPException(status_code=404, detail="Order not found")
+    logger.debug(f"[API] ✅ Заказ найден: _id={order.get('_id')}")
     
     update_data = {"updated_at": utcnow_iso()}
     if payload.payment_status is not None:
@@ -186,8 +198,9 @@ async def update_order(external_id: str, payload: UpdateOrder):
     if payload.notes is not None:
         update_data["notes"] = payload.notes
     
+    logger.debug(f"[API] 💾 Обновление данных заказа: {update_data}")
     await db.couriers_deliveries.update_one({"external_id": external_id}, {"$set": update_data})
-    logger.info(f"Order {external_id} updated: {update_data}")
+    logger.info(f"[API] ✅ Заказ {external_id} обновлен: {update_data}")
     
     return JSONResponse({"ok": True, "external_id": external_id})
 
@@ -207,7 +220,7 @@ async def route_redirect(key: str):
     logger = logging.getLogger(__name__)
     
     # Логируем входящий запрос для отладки
-    logger.info(f"Route redirect request received: key={key}")
+    logger.info(f"[API] 🔗 Запрос на редирект маршрута: key={key}")
     
     # Получаем данные редиректа (БЕЗ обновления TTL - чтобы ключ истекал через 24 часа)
     redis = get_redis()
@@ -215,7 +228,7 @@ async def route_redirect(key: str):
     
     if not data_str:
         # Если ключ не найден или истек
-        logger.warning(f"Route redirect key not found or expired: {key}")
+        logger.warning(f"[API] ⚠️ Ключ редиректа маршрута не найден или истек: key={key}")
         raise HTTPException(status_code=404, detail="Link expired or invalid")
     
     try:
@@ -246,8 +259,9 @@ async def route_redirect(key: str):
     ).sort("timestamp_ns", 1).to_list(10000)  # Сортируем от меньшего к большему
     
     if not locations:
-        logger.warning(f"No locations found for courier {chat_id} in last 72 hours")
+        logger.warning(f"[API] ⚠️ Локации не найдены для курьера {chat_id} за последние 72 часа")
         raise HTTPException(status_code=404, detail="No locations found")
+    logger.info(f"[API] 📍 Найдено {len(locations)} локаций для курьера {chat_id}")
     
     # Проверяем последнюю локацию - она должна быть не старше 24 часов
     last_location = locations[-1]
@@ -299,7 +313,7 @@ async def route_redirect(key: str):
     waypoints_str = "/".join(waypoints)
     maps_url = f"https://www.google.com/maps/dir/{waypoints_str}"
     
-    logger.info(f"Redirecting route key {key} to Google Maps with {len(waypoints)} points for courier {chat_id}")
+    logger.info(f"[API] ✅ Редирект маршрута: key={key}, {len(waypoints)} точек, курьер {chat_id}")
     
     # Редиректим на Google Maps
     return RedirectResponse(url=maps_url, status_code=302)
@@ -314,7 +328,7 @@ async def location_redirect(key: str, lang: str = None):
     logger = logging.getLogger(__name__)
     
     # Логируем входящий запрос для отладки
-    logger.info(f"Location redirect request received: key={key}, lang={lang}")
+    logger.info(f"[API] 📍 Запрос на редирект локации: key={key}, lang={lang}")
     
     # Получаем данные редиректа (БЕЗ обновления TTL - чтобы ключ истекал через 24 часа)
     redis = get_redis()
@@ -322,7 +336,7 @@ async def location_redirect(key: str, lang: str = None):
     
     if not data_str:
         # Если ключ не найден или истек - игнорируем запрос
-        logger.warning(f"Location redirect key not found or expired: {key}")
+        logger.warning(f"[API] ⚠️ Ключ редиректа локации не найден или истек: key={key}")
         raise HTTPException(status_code=404, detail="Link expired or invalid")
     
     try:
@@ -365,7 +379,7 @@ async def location_redirect(key: str, lang: str = None):
     # Формируем ссылку на Google Maps
     maps_url = f"https://maps.google.com/?q={lat},{lon}"
     
-    logger.debug(f"Redirecting location key {key} to Google Maps: {lat},{lon}")
+    logger.info(f"[API] ✅ Редирект локации: key={key}, координаты {lat},{lon}")
     
     # Редиректим на Google Maps
     return RedirectResponse(url=maps_url, status_code=302)

@@ -35,12 +35,12 @@ async def is_super_admin(user_id: int) -> bool:
 async def cmd_admin(message: Message):
     import logging
     logger = logging.getLogger(__name__)
-    logger.info(f"Admin panel access attempt by user {message.from_user.id}")
+    logger.info(f"[ADMIN] 🔧 Попытка доступа к админ-панели пользователем {message.from_user.id}")
     if not await is_super_admin(message.from_user.id):
-        logger.warning(f"Access denied for user {message.from_user.id}")
+        logger.warning(f"[ADMIN] ⚠️ Доступ запрещен для пользователя {message.from_user.id}")
         await message.answer("❌ Доступ запрещен")
         return
-    logger.info(f"Admin panel opened by user {message.from_user.id}")
+    logger.info(f"[ADMIN] ✅ Админ-панель открыта пользователем {message.from_user.id}")
     await message.answer("🔧 Админ-панель", reply_markup=admin_main_kb())
 
 @router.callback_query(F.data == "admin:back")
@@ -87,14 +87,15 @@ async def cb_back_from_couriers(call: CallbackQuery, state: FSMContext):
 async def cb_add_user(call: CallbackQuery, state: FSMContext):
     import logging
     logger = logging.getLogger(__name__)
-    logger.info(f"Admin add user callback from {call.from_user.id}")
+    logger.info(f"[ADMIN] ➕ Админ {call.from_user.id} добавляет пользователя")
     
     if not await is_super_admin(call.from_user.id):
+        logger.warning(f"[ADMIN] ⚠️ Доступ запрещен для пользователя {call.from_user.id}")
         await call.answer("❌ Доступ запрещен", show_alert=True)
         return
     
     await state.set_state(AdminStates.waiting_user_id)
-    logger.info(f"State set to waiting_user_id for {call.from_user.id}")
+    logger.debug(f"[ADMIN] 📊 Состояние установлено: waiting_user_id для {call.from_user.id}")
     
     await call.message.edit_text("➕ Добавление курьера", reply_markup=back_to_admin_kb())
     await call.message.answer("Выбери пользователя из контактов:", reply_markup=request_user_kb())
@@ -104,37 +105,39 @@ async def cb_add_user(call: CallbackQuery, state: FSMContext):
 async def process_add_user(message: Message, state: FSMContext, bot: Bot):
     import logging
     logger = logging.getLogger(__name__)
-    logger.info(f"Received user_shared from {message.from_user.id}: {message.user_shared}")
+    logger.info(f"[ADMIN] 👤 Получен user_shared от {message.from_user.id}: user_id={message.user_shared.user_id}")
     
     current_state = await state.get_state()
-    logger.info(f"Current state: {current_state}")
+    logger.debug(f"[ADMIN] 📊 Текущее состояние: {current_state}")
     
     if current_state != AdminStates.waiting_user_id:
-        logger.warning(f"user_shared received but state is {current_state}")
+        logger.warning(f"[ADMIN] ⚠️ user_shared получен, но состояние {current_state}, игнорируем")
         return
     
     if not await is_super_admin(message.from_user.id):
-        logger.warning(f"Non-admin tried to add user: {message.from_user.id}")
+        logger.warning(f"[ADMIN] ⚠️ Не-админ пытается добавить пользователя: {message.from_user.id}")
         return
     
     user_id = message.user_shared.user_id
-    logger.info(f"Admin {message.from_user.id} selected user {user_id}")
+    logger.info(f"[ADMIN] ✅ Админ {message.from_user.id} выбрал пользователя {user_id}")
     
     db = await get_db()
+    logger.debug(f"[ADMIN] 🔍 Проверка существования курьера {user_id}")
     existing = await db.couriers.find_one({"tg_chat_id": user_id})
     if existing:
-        logger.info(f"User {user_id} already exists, skipping add")
+        logger.info(f"[ADMIN] ⚠️ Курьер {user_id} уже существует, пропускаем добавление")
         await message.answer(f"ℹ️ Курьер {user_id} уже существует")
         await state.clear()
         return
     
     try:
+        logger.debug(f"[ADMIN] 🔍 Получение информации о пользователе {user_id} из Telegram")
         chat = await bot.get_chat(user_id)
         full_name = chat.full_name or f"user_{user_id}"
         username = chat.username
-        logger.info(f"Fetched user info: full_name={full_name}, username={username}")
+        logger.info(f"[ADMIN] ✅ Информация о пользователе получена: full_name={full_name}, username={username}")
     except Exception as e:
-        logger.warning(f"Failed to fetch user info for {user_id}: {e}")
+        logger.warning(f"[ADMIN] ⚠️ Не удалось получить информацию о пользователе {user_id}: {e}")
         full_name = f"user_{user_id}"
         username = None
     
@@ -147,6 +150,7 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
         from utils.odoo import create_courier
         # create_courier использует courier_tg_chat_id как основной идентификатор
         # Автоматически обновляет существующего курьера или создает нового
+        logger.debug(f"[ADMIN] 🔌 Создание курьера в Odoo для пользователя {user_id}")
         odoo_result = await create_courier(
             name=full_name,
             courier_tg_chat_id=str(user_id),
@@ -154,13 +158,14 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
             is_online=False
         )
         if odoo_result:
-            logger.info(f"Courier created/updated in Odoo for user {user_id} (courier_tg_chat_id: {user_id})")
+            logger.info(f"[ADMIN] ✅ Курьер создан/обновлен в Odoo для пользователя {user_id} (courier_tg_chat_id: {user_id})")
             odoo_created = True
         else:
-            logger.warning(f"Failed to create courier in Odoo for user {user_id}")
+            logger.warning(f"[ADMIN] ⚠️ Не удалось создать курьера в Odoo для пользователя {user_id}")
     except Exception as e:
-        logger.error(f"Error creating courier in Odoo: {e}", exc_info=True)
+        logger.error(f"[ADMIN] ❌ Ошибка создания курьера в Odoo: {e}", exc_info=True)
     
+    logger.debug(f"[ADMIN] 💾 Сохранение курьера в БД: user_id={user_id}, name={full_name}")
     courier = {
         "name": full_name,
         "username": username,
@@ -171,7 +176,7 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
         "odoo_id": str(user_id),  # odoo_id = courier_tg_chat_id (основной идентификатор)
     }
     await db.couriers.insert_one(courier)
-    logger.info(f"Admin {message.from_user.id} added user {user_id} ({full_name}), Odoo: {'created' if odoo_created else 'failed'}")
+    logger.info(f"[ADMIN] ✅ Админ {message.from_user.id} добавил пользователя {user_id} ({full_name}), Odoo: {'создан' if odoo_created else 'ошибка'}")
     
     odoo_status = "\n✅ Odoo: создан/обновлен" if odoo_created else "\n⚠️ Odoo: не создан"
     username_text = f"Username: @{username}\n" if username else ""
@@ -232,24 +237,28 @@ async def cb_delete_user(call: CallbackQuery):
     import logging
     logger = logging.getLogger(__name__)
     if not await is_super_admin(call.from_user.id):
+        logger.warning(f"[ADMIN] ⚠️ Доступ запрещен для пользователя {call.from_user.id}")
         await call.answer("❌ Доступ запрещен", show_alert=True)
         return
     
     chat_id = int(call.data.split(":", 2)[2])
+    logger.info(f"[ADMIN] 🗑️ Админ {call.from_user.id} удаляет пользователя {chat_id}")
     db = await get_db()
+    logger.debug(f"[ADMIN] 💾 Удаление курьера {chat_id} из БД")
     result = await db.couriers.delete_one({"tg_chat_id": chat_id})
     
     from db.models import Action
     await Action.log(db, call.from_user.id, "admin_del_user", details={"deleted_user_id": chat_id})
+    logger.debug(f"[ADMIN] 📝 Действие 'admin_del_user' залогировано")
     
     if result.deleted_count > 0:
-        logger.info(f"Admin {call.from_user.id} deleted user {chat_id}")
+        logger.info(f"[ADMIN] ✅ Админ {call.from_user.id} удалил пользователя {chat_id}")
         await call.message.edit_text(
             f"✅ Пользователь {chat_id} удален",
             reply_markup=admin_main_kb()
         )
     else:
-        logger.warning(f"Failed to delete user {chat_id} by admin {call.from_user.id}")
+        logger.warning(f"[ADMIN] ⚠️ Не удалось удалить пользователя {chat_id} админом {call.from_user.id}")
         await call.message.edit_text(
             "❌ Не удалось удалить пользователя",
             reply_markup=admin_main_kb()
@@ -261,7 +270,9 @@ async def cb_on_shift_couriers(call: CallbackQuery):
     import logging
     logger = logging.getLogger(__name__)
     
+    logger.info(f"[ADMIN] 🚚 Админ {call.from_user.id} запрашивает список курьеров на смене")
     if not await is_super_admin(call.from_user.id):
+        logger.warning(f"[ADMIN] ⚠️ Доступ запрещен для пользователя {call.from_user.id}")
         await call.answer("❌ Доступ запрещен", show_alert=True)
         return
     
@@ -269,7 +280,9 @@ async def cb_on_shift_couriers(call: CallbackQuery):
     from datetime import datetime, timezone
     
     # Получаем всех курьеров на смене
+    logger.debug(f"[ADMIN] 🔍 Поиск курьеров на смене")
     couriers = await db.couriers.find({"is_on_shift": True}).to_list(1000)
+    logger.info(f"[ADMIN] 📊 Найдено {len(couriers)} курьеров на смене")
     
     if not couriers:
         await call.message.edit_text(
@@ -681,10 +694,12 @@ async def process_broadcast(message: Message, state: FSMContext, bot: Bot):
     import logging
     logger = logging.getLogger(__name__)
     if not await is_super_admin(message.from_user.id):
+        logger.warning(f"[ADMIN] ⚠️ Не-админ пытается отправить рассылку: {message.from_user.id}")
         return
     
     data = await state.get_data()
     group = data.get("broadcast_group", "all")
+    logger.info(f"[ADMIN] 📢 Админ {message.from_user.id} начинает рассылку группе: {group}")
     
     db = await get_db()
     query = {}
@@ -693,24 +708,29 @@ async def process_broadcast(message: Message, state: FSMContext, bot: Bot):
     elif group == "off_shift":
         query["is_on_shift"] = False
     
+    logger.debug(f"[ADMIN] 🔍 Поиск курьеров для рассылки: query={query}")
     couriers = await db.couriers.find(query).to_list(1000)
-    logger.info(f"Admin {message.from_user.id} starting broadcast to {len(couriers)} couriers (group: {group})")
+    logger.info(f"[ADMIN] 📊 Найдено {len(couriers)} курьеров для рассылки (группа: {group})")
     
     sent = 0
     failed = 0
     
     from db.models import Action
     await Action.log(db, message.from_user.id, "admin_broadcast", details={"group": group, "text": message.text})
+    logger.debug(f"[ADMIN] 📝 Действие 'admin_broadcast' залогировано")
     
+    logger.debug(f"[ADMIN] 📤 Начало отправки рассылки...")
     for courier in couriers:
         try:
             await bot.send_message(courier["tg_chat_id"], f"📢 {message.text}")
             sent += 1
+            if sent % 10 == 0:
+                logger.debug(f"[ADMIN] 📊 Отправлено {sent}/{len(couriers)} сообщений")
         except Exception as e:
-            logger.warning(f"Failed to send broadcast to {courier['tg_chat_id']}: {e}")
+            logger.warning(f"[ADMIN] ⚠️ Ошибка отправки рассылки курьеру {courier['tg_chat_id']}: {e}")
             failed += 1
     
-    logger.info(f"Broadcast completed: sent={sent}, failed={failed}")
+    logger.info(f"[ADMIN] ✅ Рассылка завершена: отправлено={sent}, ошибок={failed}")
     await message.answer(
         f"✅ Рассылка завершена\n\n"
         f"Отправлено: {sent}\n"
