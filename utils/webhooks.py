@@ -110,6 +110,7 @@ async def prepare_order_data(db, order: Dict[str, Any]) -> Dict[str, Any]:
         "external_id": order.get("external_id"),
         "status": mapped_status,  # Используем преобразованный статус
         "payment_status": order.get("payment_status"),
+        "is_cash_payment": order.get("is_cash_payment", False),
         "delivery_time": order.get("delivery_time"),
         "priority": order.get("priority", 0),
         "brand": order.get("brand"),
@@ -121,6 +122,7 @@ async def prepare_order_data(db, order: Dict[str, Any]) -> Dict[str, Any]:
         "map_url": order.get("map_url"),
         "notes": order.get("notes"),
         "photos": order.get("photos", []),
+        "pay_photo": order.get("pay_photo", []),
         "courier": courier_data
     }
     

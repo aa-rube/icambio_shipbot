@@ -80,6 +80,7 @@ async def create_order(payload: IncomingOrder):
         "assigned_to": courier["_id"],
         "status": "waiting",
         "payment_status": payload.payment_status,
+        "is_cash_payment": payload.is_cash_payment,
         "delivery_time": payload.delivery_time,
         "priority": payload.priority,
         "brand": payload.brand,
@@ -97,6 +98,7 @@ async def create_order(payload: IncomingOrder):
         "map_url": payload.map_url,
         "notes": payload.notes,
         "photos": [],
+        "pay_photo": [],
     }
     
     logger.debug(f"[API] Order document prepared: courier_tg_chat_id={order_doc['courier_tg_chat_id']} (type: {type(order_doc['courier_tg_chat_id']).__name__})")
@@ -171,6 +173,8 @@ async def update_order(external_id: str, payload: UpdateOrder):
     update_data = {"updated_at": utcnow_iso()}
     if payload.payment_status is not None:
         update_data["payment_status"] = payload.payment_status
+    if payload.is_cash_payment is not None:
+        update_data["is_cash_payment"] = payload.is_cash_payment
     if payload.delivery_time is not None:
         update_data["delivery_time"] = payload.delivery_time
     if payload.priority is not None:

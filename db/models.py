@@ -17,11 +17,13 @@ class IncomingOrder(BaseModel):
     brand: Optional[str] = None
     source: Optional[str] = None
     payment_status: str = Field(default="NOT_PAID", description="NOT_PAID, PAID, REFUND")
+    is_cash_payment: bool = Field(default=False, description="Признак оплаты заказа наличными")
     delivery_time: Optional[str] = None
     priority: int = Field(default=0, description="Приоритет заказа")
 
 class UpdateOrder(BaseModel):
     payment_status: Optional[str] = None
+    is_cash_payment: Optional[bool] = None
     delivery_time: Optional[str] = None
     priority: Optional[int] = None
     address: Optional[str] = None
@@ -47,6 +49,8 @@ ACTION_TYPES = (
     "order_completed",      # завершил заказ
     "order_problem",        # проблема с заказом
     "photo_sent",           # отправил фото
+    "payment_accepted",     # принял оплату
+    "payment_photo_sent",  # отправил фото оплаты
     "message_sent",         # отправил сообщение
     "admin_add_user",       # админ добавил пользователя
     "admin_del_user",       # админ удалил пользователя

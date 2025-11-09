@@ -159,7 +159,7 @@ async def show_active_orders(chat_id: int, message: Message):
             await message.answer(text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
             logger.debug(f"[ORDERS] Sent waiting order {order.get('external_id')} to chat_id {chat_id}")
         elif order["status"] == "in_transit":
-            await message.answer(text, parse_mode="HTML", reply_markup=in_transit_kb(order["external_id"]))
+            await message.answer(text, parse_mode="HTML", reply_markup=in_transit_kb(order["external_id"], order))
             logger.debug(f"[ORDERS] Sent in_transit order {order.get('external_id')} to chat_id {chat_id}")
     
     if not found:
@@ -206,7 +206,7 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
     }
     await send_webhook("order_accepted", webhook_data)
     
-    await call.message.edit_text(format_order_text(order), parse_mode="HTML", reply_markup=in_transit_kb(external_id))
+    await call.message.edit_text(format_order_text(order), parse_mode="HTML", reply_markup=in_transit_kb(external_id, order))
     await call.answer("Статус: в пути")
 
 @router.callback_query(F.data.startswith("order:later:"))
@@ -218,6 +218,78 @@ async def cb_order_later(call: CallbackQuery):
     await call.message.delete()
     await call.answer()
 
+@router.callback_query(F.data.startswith("order:accept_payment:"))
+async def cb_order_accept_payment(call: CallbackQuery):
+    import logging
+    logger = logging.getLogger(__name__)
+    external_id = call.data.split(":", 2)[2]
+    logger.info(f"User {call.from_user.id} accepting payment for order {external_id}")
+    
+    redis = get_redis()
+    # Устанавливаем флаг ожидания фотографий оплаты
+    await redis.setex(f"courier:payment_photo_wait:{call.message.chat.id}", PHOTO_WAIT_TTL, external_id)
+    
+    db = await get_db()
+    from db.models import Action
+    await Action.log(db, call.from_user.id, "payment_accepted", order_id=external_id)
+    
+    await call.message.answer("💰 Отфотографируйте купюры и отправьте фото в бот")
+    await call.answer()
+
+@router.callback_query(F.data.startswith("order:finish_after_payment:"))
+async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
+    import logging
+    logger = logging.getLogger(__name__)
+    external_id = call.data.split(":", 2)[2]
+    logger.info(f"User {call.from_user.id} finishing order {external_id} after payment")
+    
+    db = await get_db()
+    redis = get_redis()
+    
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    if not order:
+        await call.answer("Заказ не найден", show_alert=True)
+        return
+    
+    # Обновляем статус оплаты и статус заказа
+    await db.couriers_deliveries.update_one(
+        {"external_id": external_id},
+        {
+            "$set": {
+                "status": "done",
+                "payment_status": "PAID",
+                "updated_at": utcnow_iso()
+            }
+        }
+    )
+    
+    # Удаляем флаг ожидания фотографий оплаты
+    await redis.delete(f"courier:payment_photo_wait:{call.message.chat.id}")
+    
+    # Получаем обновленный заказ для webhook
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    
+    from db.models import Action
+    await Action.log(db, call.from_user.id, "order_completed", order_id=external_id, details={"after_payment": True})
+    logger.info(f"User {call.from_user.id} completed order {external_id} after payment")
+    
+    # Отправка webhook
+    from utils.webhooks import send_webhook, prepare_order_data
+    order_data = await prepare_order_data(db, order)
+    webhook_data = {
+        **order_data,
+        "timestamp": utcnow_iso()
+    }
+    await send_webhook("order_completed", webhook_data)
+    
+    await call.message.answer("✅ Заказ выполнен. Оплата принята.")
+    await call.answer()
+    
+    # notify manager
+    courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
+    if courier:
+        await notify_manager(bot, courier, f"📦 Курьер {courier['name']} завершил заказ {external_id} (оплата наличными)")
+
 @router.callback_query(F.data.startswith("order:done:"))
 async def cb_order_done(call: CallbackQuery):
     import logging
@@ -225,10 +297,20 @@ async def cb_order_done(call: CallbackQuery):
     external_id = call.data.split(":", 2)[2]
     logger.info(f"User {call.from_user.id} completing order {external_id}")
     
+    db = await get_db()
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    if not order:
+        await call.answer("Заказ не найден", show_alert=True)
+        return
+    
+    # Если оплата наличными и статус оплаты "не оплачен", не позволяем завершить заказ
+    if order.get("is_cash_payment") and order.get("payment_status") == "NOT_PAID":
+        await call.answer("Сначала примите оплату", show_alert=True)
+        return
+    
     redis = get_redis()
     await redis.setex(f"courier:photo_wait:{call.message.chat.id}", PHOTO_WAIT_TTL, external_id)
     
-    db = await get_db()
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_completed", order_id=external_id)
     
@@ -268,7 +350,7 @@ async def cmd_history_today(message: Message):
         found = True
         text = format_order_text(order)
         if order["status"] in ["waiting", "in_transit"]:
-            kb = new_order_kb(order["external_id"]) if order["status"] == "waiting" else in_transit_kb(order["external_id"])
+            kb = new_order_kb(order["external_id"]) if order["status"] == "waiting" else in_transit_kb(order["external_id"], order)
             await message.answer(text, parse_mode="HTML", reply_markup=kb)
         else:
             await message.answer(text, parse_mode="HTML")
