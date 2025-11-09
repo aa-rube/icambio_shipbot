@@ -23,17 +23,24 @@ async def on_startup():
 async def create_order(payload: IncomingOrder):
     import logging
     logger = logging.getLogger(__name__)
+    
+    logger.info(f"[API] Creating order: external_id={payload.external_id}, courier_tg_chat_id={payload.courier_tg_chat_id} (type: {type(payload.courier_tg_chat_id).__name__})")
+    
     db = await get_db()
     redis = get_redis()
 
     # Find courier by tg_chat_id
     courier = await db.couriers.find_one({"tg_chat_id": payload.courier_tg_chat_id})
     if not courier:
-        logger.warning(f"Courier not found: {payload.courier_tg_chat_id}")
+        logger.warning(f"[API] Courier not found: {payload.courier_tg_chat_id}")
         raise HTTPException(status_code=404, detail="Courier not found")
+    
+    logger.debug(f"[API] Courier found: _id={courier.get('_id')}, name={courier.get('name')}, tg_chat_id={courier.get('tg_chat_id')}")
 
     # Ensure external order id uniqueness (also enforced by unique index)
-    if await db.couriers_deliveries.find_one({"external_id": payload.external_id}):
+    existing_order = await db.couriers_deliveries.find_one({"external_id": payload.external_id})
+    if existing_order:
+        logger.warning(f"[API] Order with external_id {payload.external_id} already exists")
         raise HTTPException(status_code=409, detail="Order with this external_id already exists")
 
     order_doc = {
@@ -60,11 +67,17 @@ async def create_order(payload: IncomingOrder):
         "notes": payload.notes,
         "photos": [],
     }
+    
+    logger.debug(f"[API] Order document prepared: courier_tg_chat_id={order_doc['courier_tg_chat_id']} (type: {type(order_doc['courier_tg_chat_id']).__name__})")
+    
     res = await db.couriers_deliveries.insert_one(order_doc)
     order_doc["_id"] = res.inserted_id
+    
+    logger.info(f"[API] Order created successfully: _id={order_doc['_id']}, external_id={payload.external_id}, courier_tg_chat_id={order_doc['courier_tg_chat_id']}")
 
     # If courier on shift -> push Telegram message
     is_on = await redis.get(f"courier:shift:{courier['tg_chat_id']}")
+    logger.debug(f"[API] Courier shift status: is_on={is_on}, tg_chat_id={courier['tg_chat_id']}")
     if is_on == "on":
         priority_emoji = "🔴" if payload.priority >= 5 else "🟡" if payload.priority >= 3 else "⚪"
         
@@ -95,16 +108,21 @@ async def create_order(payload: IncomingOrder):
                 text += f" | 📊 {payload.source}"
 
         try:
+            logger.info(f"[API] Sending Telegram message to courier {courier['tg_chat_id']} for order {payload.external_id}")
             await bot.send_message(
                 courier["tg_chat_id"],
                 text,
                 parse_mode="HTML",
                 reply_markup=new_order_kb(payload.external_id)
             )
+            logger.info(f"[API] Telegram message sent successfully to courier {courier['tg_chat_id']}")
         except Exception as e:
-            logger.error(f"Failed to send message: {e}")
+            logger.error(f"[API] Failed to send Telegram message to courier {courier['tg_chat_id']}: {e}", exc_info=True)
             pass
+    else:
+        logger.info(f"[API] Courier {courier['tg_chat_id']} is not on shift, skipping Telegram notification")
 
+    logger.info(f"[API] Order creation completed: external_id={payload.external_id}, order_id={order_doc['_id']}")
     return JSONResponse({"ok": True, "order_id": str(order_doc["_id"]), "external_id": payload.external_id})
 
 @app.patch("/api/orders/{external_id}")

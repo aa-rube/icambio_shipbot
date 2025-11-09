@@ -23,6 +23,10 @@ async def run_api_server():
 
 async def run_bot():
     """Запускает Telegram бота"""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("[BOT] Initializing bot...")
+    
     bot = Bot(BOT_TOKEN)
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
@@ -35,13 +39,16 @@ async def run_bot():
     dp.include_router(errors.router)
 
     try:
+        logger.info("[BOT] Starting polling...")
         # Добавляем edited_message в allowed_updates для обработки лайв-локации
         await dp.start_polling(bot, allowed_updates=["message", "edited_message", "callback_query"])
     finally:
         await bot.session.close()
+        logger.info("[BOT] Bot stopped")
 
 async def main():
-    setup_logging(logging.INFO)
+    logger = setup_logging(logging.INFO)
+    logger.info("[BOT] Starting bot and API server...")
     await init_indexes()
 
     # Запускаем бота и API сервер параллельно

@@ -48,30 +48,92 @@ def format_order_text(order: dict) -> str:
 
 @router.message(F.text == "/orders")
 async def cmd_orders(message: Message):
-    await show_active_orders(message.chat.id, message)
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    logger.info(f"[ORDERS] User {user_id} (chat_id: {chat_id}) executed /orders command")
+    
+    try:
+        await show_active_orders(chat_id, message)
+    except Exception as e:
+        logger.error(f"[ORDERS] Error in cmd_orders for user {user_id} (chat_id: {chat_id}): {e}", exc_info=True)
+        await message.answer("Произошла ошибка при загрузке заказов")
 
 @router.callback_query(F.data == "orders:list")
 async def cb_my_orders(call: CallbackQuery):
-    await show_active_orders(call.message.chat.id, call.message)
-    await call.answer()
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    chat_id = call.message.chat.id
+    user_id = call.from_user.id
+    logger.info(f"[ORDERS] User {user_id} (chat_id: {chat_id}) clicked 'Мои заказы' button")
+    
+    try:
+        await show_active_orders(chat_id, call.message)
+        await call.answer()
+    except Exception as e:
+        logger.error(f"[ORDERS] Error in cb_my_orders for user {user_id} (chat_id: {chat_id}): {e}", exc_info=True)
+        await call.answer("Произошла ошибка при загрузке заказов", show_alert=True)
 
 async def show_active_orders(chat_id: int, message: Message):
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[ORDERS] show_active_orders called for chat_id: {chat_id} (type: {type(chat_id).__name__})")
+    
     db = await get_db()
-    cursor = db.couriers_deliveries.find({
-        "courier_tg_chat_id": chat_id,
+    
+    # Проверяем, есть ли заказы с таким courier_tg_chat_id (без фильтра по статусу)
+    all_orders_count = await db.couriers_deliveries.count_documents({"courier_tg_chat_id": chat_id})
+    logger.info(f"[ORDERS] Total orders for chat_id {chat_id}: {all_orders_count}")
+    
+    # Проверяем заказы с разными типами данных
+    # Пробуем найти заказы как с числом, так и со строкой
+    orders_as_int = await db.couriers_deliveries.count_documents({"courier_tg_chat_id": int(chat_id)})
+    logger.info(f"[ORDERS] Orders with courier_tg_chat_id as int({chat_id}): {orders_as_int}")
+    
+    # Определяем правильный тип для запроса
+    # Если заказы найдены с int, используем int, иначе используем исходный тип
+    search_chat_id = int(chat_id) if orders_as_int > 0 else chat_id
+    
+    # Получаем пример заказа для отладки
+    sample_order = await db.couriers_deliveries.find_one({"courier_tg_chat_id": search_chat_id})
+    if sample_order:
+        logger.debug(f"[ORDERS] Sample order found: courier_tg_chat_id={sample_order.get('courier_tg_chat_id')} (type: {type(sample_order.get('courier_tg_chat_id')).__name__}), status={sample_order.get('status')}, external_id={sample_order.get('external_id')}")
+    else:
+        logger.warning(f"[ORDERS] No orders found for chat_id {chat_id} (tried as {type(search_chat_id).__name__})")
+    
+    # Логируем запрос к БД
+    query = {
+        "courier_tg_chat_id": search_chat_id,
         "status": {"$in": ["waiting", "in_transit"]}
-    }).sort("priority", -1).sort("created_at", 1)
+    }
+    logger.debug(f"[ORDERS] MongoDB query: {query}")
+    
+    cursor = db.couriers_deliveries.find(query).sort("priority", -1).sort("created_at", 1)
     
     found = False
+    order_count = 0
     async for order in cursor:
         found = True
+        order_count += 1
+        logger.info(f"[ORDERS] Found order #{order_count}: external_id={order.get('external_id')}, status={order.get('status')}, priority={order.get('priority')}")
+        
         text = format_order_text(order)
         if order["status"] == "waiting":
             await message.answer(text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
+            logger.debug(f"[ORDERS] Sent waiting order {order.get('external_id')} to chat_id {chat_id}")
         elif order["status"] == "in_transit":
             await message.answer(text, parse_mode="HTML", reply_markup=in_transit_kb(order["external_id"]))
+            logger.debug(f"[ORDERS] Sent in_transit order {order.get('external_id')} to chat_id {chat_id}")
+    
     if not found:
+        logger.warning(f"[ORDERS] No active orders found for chat_id {chat_id}. Total orders: {all_orders_count}, Orders as int: {orders_as_int}")
         await message.answer("Нет активных заказов.")
+    else:
+        logger.info(f"[ORDERS] Successfully sent {order_count} active order(s) to chat_id {chat_id}")
 
 @router.callback_query(F.data.startswith("order:go:"))
 async def cb_order_go(call: CallbackQuery, bot: Bot):
