@@ -517,7 +517,21 @@ async def cb_show_route(call: CallbackQuery):
                 loc = locations[0]
                 maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
             else:
-                # Создаем URL с маршрутом (со всеми точками)
+                # Ограничиваем количество точек до 50, чтобы Google Maps мог обработать маршрут
+                # Google Maps имеет ограничение на длину URL и количество waypoints
+                MAX_WAYPOINTS = 50
+                if len(waypoints) > MAX_WAYPOINTS:
+                    # Берем первую, последнюю и равномерно распределенные промежуточные точки
+                    selected_waypoints = [waypoints[0]]  # Первая точка
+                    step = len(waypoints) / (MAX_WAYPOINTS - 1)
+                    for i in range(1, MAX_WAYPOINTS - 1):
+                        idx = int(i * step)
+                        if idx < len(waypoints):
+                            selected_waypoints.append(waypoints[idx])
+                    selected_waypoints.append(waypoints[-1])  # Последняя точка
+                    waypoints = selected_waypoints
+                
+                # Создаем URL с маршрутом
                 waypoints_str = "/".join(waypoints)
                 maps_url = f"https://www.google.com/maps/dir/{waypoints_str}"
                 
