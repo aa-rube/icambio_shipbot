@@ -5,6 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from db.mongo import get_db
 from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb
 from db.redis_client import get_redis
+from utils.url_shortener import shorten_url
 
 router = Router()
 
@@ -516,9 +517,13 @@ async def cb_show_route(call: CallbackQuery):
                 loc = locations[0]
                 maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
             else:
-                # Создаем URL с маршрутом
+                # Создаем URL с маршрутом (со всеми точками)
                 waypoints_str = "/".join(waypoints)
                 maps_url = f"https://www.google.com/maps/dir/{waypoints_str}"
+                
+                # Сокращаем URL через сервис сокращения ссылок
+                # Это необходимо, так как Telegram имеет ограничение на длину HTML-сущностей (ссылок)
+                maps_url = await shorten_url(maps_url)
         
         # Формируем текст с гиперссылкой
         text = f'Посмотреть маршрут по <a href="{maps_url}">ссылке</a>'
