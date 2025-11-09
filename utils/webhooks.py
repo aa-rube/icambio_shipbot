@@ -5,6 +5,27 @@ from config import WEBHOOK_URL
 
 logger = logging.getLogger(__name__)
 
+# Маппинг внутренних статусов заказов на внешние статусы для webhook
+ORDER_STATUS_MAPPING = {
+    "in_transit": "stage_delivery_10",
+    "done": "stage_delivery_11",
+    # Остальные статусы остаются без изменений
+    "waiting": "waiting",
+    "cancelled": "cancelled"
+}
+
+def map_order_status(status: str) -> str:
+    """
+    Преобразует внутренний статус заказа в внешний статус для webhook
+    
+    Args:
+        status: Внутренний статус заказа (waiting, in_transit, done, cancelled)
+        
+    Returns:
+        Внешний статус для webhook
+    """
+    return ORDER_STATUS_MAPPING.get(status, status)
+
 async def send_webhook(event_type: str, data: Dict[str, Any]) -> bool:
     """
     Отправляет webhook с данными события
@@ -80,10 +101,14 @@ async def prepare_order_data(db, order: Dict[str, Any]) -> Dict[str, Any]:
             "tg_chat_id": courier.get("tg_chat_id")
         }
     
+    # Получаем внутренний статус и преобразуем его для webhook
+    internal_status = order.get("status")
+    mapped_status = map_order_status(internal_status)
+    
     order_data = {
         "order_id": str(order["_id"]),
         "external_id": order.get("external_id"),
-        "status": order.get("status"),
+        "status": mapped_status,  # Используем преобразованный статус
         "payment_status": order.get("payment_status"),
         "delivery_time": order.get("delivery_time"),
         "priority": order.get("priority", 0),
@@ -98,6 +123,8 @@ async def prepare_order_data(db, order: Dict[str, Any]) -> Dict[str, Any]:
         "photos": order.get("photos", []),
         "courier": courier_data
     }
+    
+    logger.debug(f"Order status mapped: {internal_status} -> {mapped_status} for order {order.get('external_id')}")
     
     return order_data
 
