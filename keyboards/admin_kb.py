@@ -62,12 +62,12 @@ def courier_location_kb(chat_id: int, location_redirect_url: str, route_redirect
     if route_redirect_url:
         # Если есть URL для маршрута, добавляем обе кнопки в один ряд
         buttons.append([
-            InlineKeyboardButton(text="📍 Где курьер?", url=location_redirect_url),
-            InlineKeyboardButton(text="🗺 Маршрут сегодня", url=route_redirect_url)
+            InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}"),
+            InlineKeyboardButton(text="🗺 Маршрут сегодня", callback_data=f"admin:show_route:{chat_id}")
         ])
     else:
         # Если нет URL для маршрута, только кнопка локации
-        buttons.append([InlineKeyboardButton(text="📍 Где курьер?", url=location_redirect_url)])
+        buttons.append([InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def courier_location_with_back_kb(chat_id: int, location_redirect_url: str, route_redirect_url: str = None) -> InlineKeyboardMarkup:
@@ -75,11 +75,23 @@ def courier_location_with_back_kb(chat_id: int, location_redirect_url: str, rout
     if route_redirect_url:
         # Если есть URL для маршрута, добавляем обе кнопки в один ряд
         buttons.append([
-            InlineKeyboardButton(text="📍 Где курьер?", url=location_redirect_url),
-            InlineKeyboardButton(text="🗺 Маршрут сегодня", url=route_redirect_url)
+            InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}"),
+            InlineKeyboardButton(text="🗺 Маршрут сегодня", callback_data=f"admin:show_route:{chat_id}")
         ])
     else:
         # Если нет URL для маршрута, только кнопка локации
-        buttons.append([InlineKeyboardButton(text="📍 Где курьер?", url=location_redirect_url)])
+        buttons.append([InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_from_couriers:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def location_back_kb(chat_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура с кнопкой 'Назад' для возврата к исходному сообщению"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_to_courier:{chat_id}")]
+    ])
+
+def route_back_kb(chat_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура с кнопкой 'Назад' для возврата к исходному сообщению"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_to_courier:{chat_id}")]
+    ])

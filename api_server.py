@@ -141,9 +141,12 @@ async def route_redirect(key: str):
     """
     Редирект на Google Maps с маршрутом курьера за смену.
     Проверяет ключ в Redis, получает актуальные данные и редиректит на карту с маршрутом.
+    
+    Теперь использует локации за последние 72 часа для маршрута,
+    но последняя точка должна быть не старше 24 часов.
     """
     import logging
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, timedelta
     from db.redis_client import get_redis
     
     logger = logging.getLogger(__name__)
@@ -168,22 +171,50 @@ async def route_redirect(key: str):
     
     chat_id = data.get("chat_id")
     shift_id = data.get("shift_id")
-    date = data.get("date")
+    time_72h_ago_str = data.get("time_72h_ago")
     
     if not shift_id:
         logger.error(f"Shift ID not found in redirect data: {data}")
         raise HTTPException(status_code=500, detail="Invalid redirect data")
     
     db = await get_db()
+    now = datetime.now(timezone.utc)
+    time_72h_ago = datetime.fromisoformat(time_72h_ago_str.replace('Z', '+00:00')) if time_72h_ago_str else now - timedelta(hours=72)
+    time_24h_ago = now - timedelta(hours=24)
     
-    # Получаем все локации за смену, отсортированные по timestamp
+    # Получаем все локации за последние 72 часа, отсортированные по timestamp
     locations = await db.locations.find(
-        {"shift_id": shift_id}
+        {
+            "chat_id": chat_id,
+            "timestamp_ns": {"$gte": int(time_72h_ago.timestamp() * 1e9)}
+        }
     ).sort("timestamp_ns", 1).to_list(10000)  # Сортируем от меньшего к большему
     
     if not locations:
-        logger.warning(f"No locations found for shift {shift_id}")
-        raise HTTPException(status_code=404, detail="No locations found for this shift")
+        logger.warning(f"No locations found for courier {chat_id} in last 72 hours")
+        raise HTTPException(status_code=404, detail="No locations found")
+    
+    # Проверяем последнюю локацию - она должна быть не старше 24 часов
+    last_location = locations[-1]
+    last_location_time = datetime.fromtimestamp(last_location.get("timestamp_ns", 0) / 1e9, tz=timezone.utc)
+    
+    if last_location_time < time_24h_ago:
+        # Если последняя локация старше 24 часов, ищем последнюю локацию за 24 часа
+        recent_location = await db.locations.find_one(
+            {
+                "chat_id": chat_id,
+                "timestamp_ns": {"$gte": int(time_24h_ago.timestamp() * 1e9)}
+            },
+            sort=[("timestamp_ns", -1)]
+        )
+        
+        if recent_location:
+            # Используем последнюю локацию за 24 часа как финальную точку
+            locations = [loc for loc in locations if loc.get("timestamp_ns") <= recent_location.get("timestamp_ns")]
+            locations.append(recent_location)
+        else:
+            # Если нет локаций за 24 часа, используем последнюю доступную
+            logger.warning(f"No locations found for courier {chat_id} in last 24 hours, using last available")
     
     if len(locations) < 2:
         # Если только одна точка, просто показываем её
@@ -213,7 +244,7 @@ async def route_redirect(key: str):
     waypoints_str = "/".join(waypoints)
     maps_url = f"https://www.google.com/maps/dir/{waypoints_str}"
     
-    logger.info(f"Redirecting route key {key} to Google Maps with {len(waypoints)} points for shift {shift_id}")
+    logger.info(f"Redirecting route key {key} to Google Maps with {len(waypoints)} points for courier {chat_id}")
     
     # Редиректим на Google Maps
     return RedirectResponse(url=maps_url, status_code=302)

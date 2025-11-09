@@ -3,8 +3,9 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from db.mongo import get_db
-from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb
+from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb
 from utils.location_redirect import generate_location_redirect_key, get_location_redirect_url, generate_route_redirect_key, get_route_redirect_url
+from db.redis_client import get_redis
 
 router = Router()
 
@@ -56,13 +57,10 @@ async def cb_back_from_couriers(call: CallbackQuery, state: FSMContext):
     # Сохраняем текст сообщения
     message_text = call.message.text or call.message.caption or ""
     
-    # Генерируем новые ключи редиректа для обновления кнопок
+    # Проверяем, есть ли маршрут для этого курьера
     try:
         msg_id = call.message.message_id
-        location_redirect_key = await generate_location_redirect_key(chat_id, msg_id)
-        location_redirect_url = get_location_redirect_url(location_redirect_key)
-        
-        # Пытаемся сгенерировать ключ для маршрута
+        # Пытаемся сгенерировать ключ для маршрута, чтобы проверить его наличие
         route_redirect_url = None
         try:
             route_redirect_key = await generate_route_redirect_key(chat_id, msg_id)
@@ -73,8 +71,9 @@ async def cb_back_from_couriers(call: CallbackQuery, state: FSMContext):
             logger.warning(f"Failed to generate route redirect for courier {chat_id}: {route_error}")
             # Если не удалось создать маршрут, просто не добавляем кнопку
         
-        # Редактируем сообщение, изменяя клавиатуру: убираем "Назад", оставляем кнопки с новыми URL
-        await call.message.edit_text(message_text, reply_markup=courier_location_kb(chat_id, location_redirect_url, route_redirect_url))
+        # Редактируем сообщение, изменяя клавиатуру: убираем "Назад", оставляем callback кнопки
+        # Передаем пустые строки для URL, так как теперь используются callback кнопки
+        await call.message.edit_text(message_text, reply_markup=courier_location_kb(chat_id, "", route_redirect_url))
     except Exception as e:
         import logging
         logger = logging.getLogger(__name__)
@@ -353,11 +352,7 @@ async def cb_on_shift_couriers(call: CallbackQuery):
             temp_msg = await bot.send_message(admin_chat_id, text)
             msg_id = temp_msg.message_id
             
-            # Генерируем ключ редиректа для локации
-            location_redirect_key = await generate_location_redirect_key(chat_id, msg_id)
-            location_redirect_url = get_location_redirect_url(location_redirect_key)
-            
-            # Пытаемся сгенерировать ключ для маршрута
+            # Пытаемся сгенерировать ключ для маршрута, чтобы проверить его наличие
             route_redirect_url = None
             try:
                 route_redirect_key = await generate_route_redirect_key(chat_id, msg_id)
@@ -367,19 +362,20 @@ async def cb_on_shift_couriers(call: CallbackQuery):
                 # Если не удалось создать маршрут, просто не добавляем кнопку
             
             # Редактируем сообщение с правильной клавиатурой
+            # Передаем пустые строки для URL, так как теперь используются callback кнопки
             if idx == len(couriers) - 1:
                 # Для последнего сообщения добавляем кнопку "Назад"
                 await bot.edit_message_reply_markup(
                     chat_id=admin_chat_id,
                     message_id=msg_id,
-                    reply_markup=courier_location_with_back_kb(chat_id, location_redirect_url, route_redirect_url)
+                    reply_markup=courier_location_with_back_kb(chat_id, "", route_redirect_url)
                 )
             else:
                 # Для остальных сообщений кнопки "Где курьер?" и "Маршрут сегодня" (если доступен)
                 await bot.edit_message_reply_markup(
                     chat_id=admin_chat_id,
                     message_id=msg_id,
-                    reply_markup=courier_location_kb(chat_id, location_redirect_url, route_redirect_url)
+                    reply_markup=courier_location_kb(chat_id, "", route_redirect_url)
                 )
         except ValueError as e:
             # Если локация не найдена, отправляем сообщение без кнопки
@@ -391,6 +387,155 @@ async def cb_on_shift_couriers(call: CallbackQuery):
             await bot.send_message(admin_chat_id, text)
     
     await call.answer()
+
+@router.callback_query(F.data.startswith("admin:show_location:"))
+async def cb_show_location(call: CallbackQuery):
+    """Обработчик кнопки 'Где курьер?' - показывает сообщение с гиперссылкой на карту"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    chat_id = int(call.data.split(":", 2)[2])
+    msg_id = call.message.message_id
+    
+    try:
+        # Генерируем ключ редиректа для локации
+        location_redirect_key = await generate_location_redirect_key(chat_id, msg_id)
+        location_redirect_url = get_location_redirect_url(location_redirect_key)
+        
+        # Формируем текст с гиперссылкой
+        text = f'Посмотреть местоположение по <a href="{location_redirect_url}">ссылке</a>'
+        
+        # Изменяем сообщение
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=location_back_kb(chat_id))
+        await call.answer()
+    except Exception as e:
+        logger.error(f"Failed to show location for courier {chat_id}: {e}", exc_info=True)
+        await call.answer("❌ Не удалось получить местоположение", show_alert=True)
+
+@router.callback_query(F.data.startswith("admin:show_route:"))
+async def cb_show_route(call: CallbackQuery):
+    """Обработчик кнопки 'Маршрут сегодня' - показывает сообщение с гиперссылкой на маршрут"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    chat_id = int(call.data.split(":", 2)[2])
+    msg_id = call.message.message_id
+    
+    try:
+        # Генерируем ключ редиректа для маршрута
+        route_redirect_key = await generate_route_redirect_key(chat_id, msg_id)
+        route_redirect_url = get_route_redirect_url(route_redirect_key)
+        
+        # Формируем текст с гиперссылкой
+        text = f'Посмотреть маршрут по <a href="{route_redirect_url}">ссылке</a>'
+        
+        # Изменяем сообщение
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=route_back_kb(chat_id))
+        await call.answer()
+    except Exception as e:
+        logger.error(f"Failed to show route for courier {chat_id}: {e}", exc_info=True)
+        await call.answer("❌ Не удалось получить маршрут", show_alert=True)
+
+@router.callback_query(F.data.startswith("admin:back_to_courier:"))
+async def cb_back_to_courier(call: CallbackQuery):
+    """Обработчик кнопки 'Назад' - возвращает к исходному сообщению курьера"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    chat_id = int(call.data.split(":", 2)[2])
+    msg_id = call.message.message_id
+    
+    try:
+        # Перестраиваем текст сообщения из актуальных данных базы
+        db = await get_db()
+        from datetime import datetime, timezone
+        
+        courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+        if not courier:
+            await call.answer("❌ Курьер не найден", show_alert=True)
+            return
+        
+        name = courier.get("name", "Unknown")
+        username = courier.get("username")
+        username_text = f"@{username}" if username else ""
+        
+        now = datetime.now(timezone.utc)
+        start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+        
+        total_today = await db.couriers_deliveries.count_documents({
+            "courier_tg_chat_id": chat_id,
+            "created_at": {"$gte": start_today.isoformat()}
+        })
+        
+        delivered_today = await db.couriers_deliveries.count_documents({
+            "courier_tg_chat_id": chat_id,
+            "status": "done",
+            "created_at": {"$gte": start_today.isoformat()}
+        })
+        
+        waiting_orders = await db.couriers_deliveries.count_documents({
+            "courier_tg_chat_id": chat_id,
+            "status": {"$in": ["waiting", "in_transit"]}
+        })
+        
+        in_transit_order = await db.couriers_deliveries.find_one({
+            "courier_tg_chat_id": chat_id,
+            "status": "in_transit"
+        })
+        
+        if in_transit_order:
+            status_text = f"В пути ({in_transit_order.get('external_id', 'N/A')})"
+        elif waiting_orders > 0:
+            status_text = "Есть заказы"
+        else:
+            status_text = "Нет заказов"
+        
+        shift_started_at = courier.get("shift_started_at")
+        shift_time_text = "Не указано"
+        if shift_started_at:
+            try:
+                shift_dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
+                shift_time_text = shift_dt.strftime("%H:%M")
+            except:
+                shift_time_text = shift_started_at
+        
+        text = (
+            f"👤 {name} {username_text}\n\n"
+            f"Статус: {status_text}\n\n"
+            f"Заказы:\n"
+            f"Всего: {total_today}\n"
+            f"Доставлено: {delivered_today}\n"
+            f"Ожидают: {waiting_orders}\n\n"
+            f"Вышел на смену: {shift_time_text}"
+        )
+        
+        # Проверяем, есть ли маршрут для этого курьера
+        route_redirect_url = None
+        try:
+            route_redirect_key = await generate_route_redirect_key(chat_id, msg_id)
+            route_redirect_url = get_route_redirect_url(route_redirect_key)
+        except Exception as route_error:
+            logger.warning(f"Failed to generate route redirect for courier {chat_id}: {route_error}")
+        
+        # Восстанавливаем исходное сообщение с кнопками
+        # Передаем пустую строку для location_redirect_url, так как теперь используются callback кнопки
+        await call.message.edit_text(text, reply_markup=courier_location_kb(chat_id, "", route_redirect_url))
+        await call.answer()
+    except Exception as e:
+        logger.error(f"Failed to restore courier message for {chat_id}: {e}", exc_info=True)
+        await call.answer("❌ Не удалось восстановить сообщение", show_alert=True)
 
 
 @router.callback_query(F.data == "admin:broadcast")

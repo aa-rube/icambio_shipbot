@@ -119,10 +119,12 @@ async def generate_route_redirect_key(chat_id: int, msg_id: int, date: str = Non
     Генерирует уникальный ключ для редиректа маршрута курьера за смену.
     Формат: {random_part}-{msg_id}
     
+    Теперь ищет локации за последние 72 часа вместо поиска по дате.
+    
     Args:
         chat_id: Telegram chat ID курьера
         msg_id: ID сообщения с кнопкой
-        date: Дата в формате DD-MM-YYYY (если не указана, используется сегодня)
+        date: Дата в формате DD-MM-YYYY (игнорируется, используется для обратной совместимости)
         
     Returns:
         Уникальный ключ для редиректа
@@ -130,37 +132,41 @@ async def generate_route_redirect_key(chat_id: int, msg_id: int, date: str = Non
     Raises:
         ValueError: Если маршрут не найден
     """
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, timedelta
     
     # Генерируем случайную часть ключа
     random_part = secrets.token_urlsafe(16)
     key = f"{random_part}-{msg_id}"
     
-    # Если дата не указана, используем сегодня
-    if not date:
-        now = datetime.now(timezone.utc)
-        date = now.strftime("%d-%m-%Y")
+    # Ищем локации за последние 72 часа
+    now = datetime.now(timezone.utc)
+    time_72h_ago = now - timedelta(hours=72)
     
-    # Ищем shift_id по chat_id и дате
     db = await get_db()
+    
+    # Ищем последнюю локацию за последние 72 часа
     location = await db.locations.find_one(
-        {"chat_id": chat_id, "date": date},
+        {
+            "chat_id": chat_id,
+            "timestamp_ns": {"$gte": int(time_72h_ago.timestamp() * 1e9)}
+        },
         sort=[("timestamp_ns", -1)]
     )
     
     if not location:
-        raise ValueError(f"Route not found for courier {chat_id} on date {date}")
+        raise ValueError(f"Route not found for courier {chat_id} in last 72 hours")
     
     shift_id = location.get("shift_id")
     if not shift_id:
-        raise ValueError(f"Shift ID not found for courier {chat_id} on date {date}")
+        # Если shift_id нет, используем chat_id как идентификатор
+        shift_id = f"route_{chat_id}"
     
     # Сохраняем данные в Redis
     data = {
         "chat_id": chat_id,
         "shift_id": shift_id,
-        "date": date,
-        "msg_id": msg_id
+        "msg_id": msg_id,
+        "time_72h_ago": time_72h_ago.isoformat()
     }
     
     redis = get_redis()
