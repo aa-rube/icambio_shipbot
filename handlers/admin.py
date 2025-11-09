@@ -4,7 +4,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from db.mongo import get_db
 from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb
-from utils.location_redirect import generate_location_redirect_key, get_location_redirect_url, generate_route_redirect_key, get_route_redirect_url
 from db.redis_client import get_redis
 
 router = Router()
@@ -59,21 +58,19 @@ async def cb_back_from_couriers(call: CallbackQuery, state: FSMContext):
     
     # Проверяем, есть ли маршрут для этого курьера
     try:
-        msg_id = call.message.message_id
-        # Пытаемся сгенерировать ключ для маршрута, чтобы проверить его наличие
-        route_redirect_url = None
-        try:
-            route_redirect_key = await generate_route_redirect_key(chat_id, msg_id)
-            route_redirect_url = get_route_redirect_url(route_redirect_key)
-        except Exception as route_error:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to generate route redirect for courier {chat_id}: {route_error}")
-            # Если не удалось создать маршрут, просто не добавляем кнопку
+        from datetime import datetime, timezone, timedelta
+        db = await get_db()
+        now = datetime.now(timezone.utc)
+        time_72h_ago = now - timedelta(hours=72)
+        
+        # Проверяем наличие локаций за последние 72 часа
+        has_route = await db.locations.find_one({
+            "chat_id": chat_id,
+            "timestamp_ns": {"$gte": int(time_72h_ago.timestamp() * 1e9)}
+        }) is not None
         
         # Редактируем сообщение, изменяя клавиатуру: убираем "Назад", оставляем callback кнопки
-        # Передаем пустые строки для URL, так как теперь используются callback кнопки
-        await call.message.edit_text(message_text, reply_markup=courier_location_kb(chat_id, "", route_redirect_url))
+        await call.message.edit_text(message_text, reply_markup=courier_location_kb(chat_id, has_route))
     except Exception as e:
         import logging
         logger = logging.getLogger(__name__)
@@ -352,45 +349,39 @@ async def cb_on_shift_couriers(call: CallbackQuery):
             temp_msg = await bot.send_message(admin_chat_id, text)
             msg_id = temp_msg.message_id
             
-            # Пытаемся сгенерировать ключ для маршрута, чтобы проверить его наличие
-            route_redirect_url = None
-            try:
-                route_redirect_key = await generate_route_redirect_key(chat_id, msg_id)
-                route_redirect_url = get_route_redirect_url(route_redirect_key)
-            except Exception as route_error:
-                logger.warning(f"Failed to generate route redirect for courier {chat_id}: {route_error}")
-                # Если не удалось создать маршрут, просто не добавляем кнопку
+            # Проверяем наличие маршрута для этого курьера
+            from datetime import timedelta
+            time_72h_ago = now - timedelta(hours=72)
+            has_route = await db.locations.find_one({
+                "chat_id": chat_id,
+                "timestamp_ns": {"$gte": int(time_72h_ago.timestamp() * 1e9)}
+            }) is not None
             
             # Редактируем сообщение с правильной клавиатурой
-            # Передаем пустые строки для URL, так как теперь используются callback кнопки
             if idx == len(couriers) - 1:
                 # Для последнего сообщения добавляем кнопку "Назад"
                 await bot.edit_message_reply_markup(
                     chat_id=admin_chat_id,
                     message_id=msg_id,
-                    reply_markup=courier_location_with_back_kb(chat_id, "", route_redirect_url)
+                    reply_markup=courier_location_with_back_kb(chat_id, has_route)
                 )
             else:
                 # Для остальных сообщений кнопки "Где курьер?" и "Маршрут сегодня" (если доступен)
                 await bot.edit_message_reply_markup(
                     chat_id=admin_chat_id,
                     message_id=msg_id,
-                    reply_markup=courier_location_kb(chat_id, "", route_redirect_url)
+                    reply_markup=courier_location_kb(chat_id, has_route)
                 )
-        except ValueError as e:
-            # Если локация не найдена, отправляем сообщение без кнопки
-            logger.warning(f"Location not found for courier {chat_id}: {e}")
-            await bot.send_message(admin_chat_id, text)
         except Exception as e:
-            logger.error(f"Failed to generate location redirect for courier {chat_id}: {e}", exc_info=True)
-            # Если не удалось создать редирект, отправляем сообщение без кнопки
+            logger.error(f"Failed to create courier message for {chat_id}: {e}", exc_info=True)
+            # Если не удалось создать сообщение, отправляем без кнопок
             await bot.send_message(admin_chat_id, text)
     
     await call.answer()
 
 @router.callback_query(F.data.startswith("admin:show_location:"))
 async def cb_show_location(call: CallbackQuery):
-    """Обработчик кнопки 'Где курьер?' - показывает сообщение с гиперссылкой на карту"""
+    """Обработчик кнопки 'Где курьер?' - показывает сообщение с прямой ссылкой на Google Maps"""
     import logging
     logger = logging.getLogger(__name__)
     
@@ -399,15 +390,54 @@ async def cb_show_location(call: CallbackQuery):
         return
     
     chat_id = int(call.data.split(":", 2)[2])
-    msg_id = call.message.message_id
     
     try:
-        # Генерируем ключ редиректа для локации
-        location_redirect_key = await generate_location_redirect_key(chat_id, msg_id)
-        location_redirect_url = get_location_redirect_url(location_redirect_key)
+        # Получаем последнюю локацию курьера
+        redis = get_redis()
+        loc_str = await redis.get(f"courier:loc:{chat_id}")
+        
+        lat = None
+        lon = None
+        
+        if loc_str:
+            # Парсим координаты из Redis: "lat,lon"
+            try:
+                parts = loc_str.split(",")
+                if len(parts) == 2:
+                    lat = float(parts[0])
+                    lon = float(parts[1])
+            except (ValueError, IndexError):
+                pass
+        
+        # Если не нашли в Redis, ищем в БД
+        if lat is None or lon is None:
+            db = await get_db()
+            last_location = await db.locations.find_one(
+                {"chat_id": chat_id},
+                sort=[("timestamp_ns", -1)]
+            )
+            
+            if not last_location:
+                await call.answer("❌ Локация не найдена", show_alert=True)
+                return
+            
+            lat = last_location.get("lat")
+            lon = last_location.get("lon")
+            
+            if not lat or not lon:
+                await call.answer("❌ Координаты не найдены", show_alert=True)
+                return
+        
+        # Валидация координат
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            await call.answer("❌ Некорректные координаты", show_alert=True)
+            return
+        
+        # Формируем прямую ссылку на Google Maps
+        maps_url = f"https://maps.google.com/?q={lat},{lon}"
         
         # Формируем текст с гиперссылкой
-        text = f'Посмотреть местоположение по <a href="{location_redirect_url}">ссылке</a>'
+        text = f'Посмотреть местоположение по <a href="{maps_url}">ссылке</a>'
         
         # Изменяем сообщение
         await call.message.edit_text(text, parse_mode="HTML", reply_markup=location_back_kb(chat_id))
@@ -418,8 +448,9 @@ async def cb_show_location(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin:show_route:"))
 async def cb_show_route(call: CallbackQuery):
-    """Обработчик кнопки 'Маршрут сегодня' - показывает сообщение с гиперссылкой на маршрут"""
+    """Обработчик кнопки 'Маршрут сегодня' - показывает сообщение с прямой ссылкой на маршрут в Google Maps"""
     import logging
+    from datetime import datetime, timezone, timedelta
     logger = logging.getLogger(__name__)
     
     if not await is_super_admin(call.from_user.id):
@@ -427,15 +458,70 @@ async def cb_show_route(call: CallbackQuery):
         return
     
     chat_id = int(call.data.split(":", 2)[2])
-    msg_id = call.message.message_id
     
     try:
-        # Генерируем ключ редиректа для маршрута
-        route_redirect_key = await generate_route_redirect_key(chat_id, msg_id)
-        route_redirect_url = get_route_redirect_url(route_redirect_key)
+        db = await get_db()
+        now = datetime.now(timezone.utc)
+        time_72h_ago = now - timedelta(hours=72)
+        time_24h_ago = now - timedelta(hours=24)
+        
+        # Получаем все локации за последние 72 часа, отсортированные по timestamp
+        locations = await db.locations.find(
+            {
+                "chat_id": chat_id,
+                "timestamp_ns": {"$gte": int(time_72h_ago.timestamp() * 1e9)}
+            }
+        ).sort("timestamp_ns", 1).to_list(10000)  # Сортируем от меньшего к большему
+        
+        if not locations:
+            await call.answer("❌ Локации не найдены", show_alert=True)
+            return
+        
+        # Проверяем последнюю локацию - она должна быть не старше 24 часов
+        last_location = locations[-1]
+        last_location_time = datetime.fromtimestamp(last_location.get("timestamp_ns", 0) / 1e9, tz=timezone.utc)
+        
+        if last_location_time < time_24h_ago:
+            # Если последняя локация старше 24 часов, ищем последнюю локацию за 24 часа
+            recent_location = await db.locations.find_one(
+                {
+                    "chat_id": chat_id,
+                    "timestamp_ns": {"$gte": int(time_24h_ago.timestamp() * 1e9)}
+                },
+                sort=[("timestamp_ns", -1)]
+            )
+            
+            if recent_location:
+                # Используем последнюю локацию за 24 часа как финальную точку
+                locations = [loc for loc in locations if loc.get("timestamp_ns") <= recent_location.get("timestamp_ns")]
+                locations.append(recent_location)
+        
+        if len(locations) < 2:
+            # Если только одна точка, просто показываем её
+            loc = locations[0]
+            maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
+        else:
+            # Формируем waypoints
+            waypoints = []
+            for loc in locations:
+                lat = loc.get("lat")
+                lon = loc.get("lon")
+                if lat is not None and lon is not None:
+                    # Валидация координат
+                    if -90 <= lat <= 90 and -180 <= lon <= 180:
+                        waypoints.append(f"{lat},{lon}")
+            
+            if len(waypoints) < 2:
+                # Если после валидации осталось меньше 2 точек
+                loc = locations[0]
+                maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
+            else:
+                # Создаем URL с маршрутом
+                waypoints_str = "/".join(waypoints)
+                maps_url = f"https://www.google.com/maps/dir/{waypoints_str}"
         
         # Формируем текст с гиперссылкой
-        text = f'Посмотреть маршрут по <a href="{route_redirect_url}">ссылке</a>'
+        text = f'Посмотреть маршрут по <a href="{maps_url}">ссылке</a>'
         
         # Изменяем сообщение
         await call.message.edit_text(text, parse_mode="HTML", reply_markup=route_back_kb(chat_id))
@@ -455,7 +541,6 @@ async def cb_back_to_courier(call: CallbackQuery):
         return
     
     chat_id = int(call.data.split(":", 2)[2])
-    msg_id = call.message.message_id
     
     try:
         # Перестраиваем текст сообщения из актуальных данных базы
@@ -521,17 +606,16 @@ async def cb_back_to_courier(call: CallbackQuery):
             f"Вышел на смену: {shift_time_text}"
         )
         
-        # Проверяем, есть ли маршрут для этого курьера
-        route_redirect_url = None
-        try:
-            route_redirect_key = await generate_route_redirect_key(chat_id, msg_id)
-            route_redirect_url = get_route_redirect_url(route_redirect_key)
-        except Exception as route_error:
-            logger.warning(f"Failed to generate route redirect for courier {chat_id}: {route_error}")
+        # Проверяем наличие маршрута для этого курьера
+        from datetime import timedelta
+        time_72h_ago = now - timedelta(hours=72)
+        has_route = await db.locations.find_one({
+            "chat_id": chat_id,
+            "timestamp_ns": {"$gte": int(time_72h_ago.timestamp() * 1e9)}
+        }) is not None
         
         # Восстанавливаем исходное сообщение с кнопками
-        # Передаем пустую строку для location_redirect_url, так как теперь используются callback кнопки
-        await call.message.edit_text(text, reply_markup=courier_location_kb(chat_id, "", route_redirect_url))
+        await call.message.edit_text(text, reply_markup=courier_location_kb(chat_id, has_route))
         await call.answer()
     except Exception as e:
         logger.error(f"Failed to restore courier message for {chat_id}: {e}", exc_info=True)

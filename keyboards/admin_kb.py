@@ -57,29 +57,29 @@ def broadcast_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin:back")]
     ])
 
-def courier_location_kb(chat_id: int, location_redirect_url: str, route_redirect_url: str = None) -> InlineKeyboardMarkup:
+def courier_location_kb(chat_id: int, has_route: bool = False) -> InlineKeyboardMarkup:
     buttons = []
-    if route_redirect_url:
-        # Если есть URL для маршрута, добавляем обе кнопки в один ряд
+    if has_route:
+        # Если есть маршрут, добавляем обе кнопки в один ряд
         buttons.append([
             InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}"),
             InlineKeyboardButton(text="🗺 Маршрут сегодня", callback_data=f"admin:show_route:{chat_id}")
         ])
     else:
-        # Если нет URL для маршрута, только кнопка локации
+        # Если нет маршрута, только кнопка локации
         buttons.append([InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def courier_location_with_back_kb(chat_id: int, location_redirect_url: str, route_redirect_url: str = None) -> InlineKeyboardMarkup:
+def courier_location_with_back_kb(chat_id: int, has_route: bool = False) -> InlineKeyboardMarkup:
     buttons = []
-    if route_redirect_url:
-        # Если есть URL для маршрута, добавляем обе кнопки в один ряд
+    if has_route:
+        # Если есть маршрут, добавляем обе кнопки в один ряд
         buttons.append([
             InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}"),
             InlineKeyboardButton(text="🗺 Маршрут сегодня", callback_data=f"admin:show_route:{chat_id}")
         ])
     else:
-        # Если нет URL для маршрута, только кнопка локации
+        # Если нет маршрута, только кнопка локации
         buttons.append([InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_from_couriers:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
