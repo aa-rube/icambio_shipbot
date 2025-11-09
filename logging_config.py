@@ -8,7 +8,7 @@ def get_home_directory():
 
 
 # Настройка логов
-LOG_PATH = os.path.join(get_home_directory(), "logs", "odoo_webhook.log")
+LOG_PATH = os.path.join(get_home_directory(), "logs", "odoo_ship_bot.log")
 os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
 
 # Базовая конфигурация: логи записываются в файл
