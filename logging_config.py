@@ -112,3 +112,101 @@ console_handler.setFormatter(console_formatter)
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 logger.addHandler(console_handler)
+
+# Фильтр для исключения библиотечных логов
+class LibraryLogFilter(logging.Filter):
+    """Фильтр, который скрывает DEBUG логи от библиотек"""
+    
+    # Список модулей библиотек, которые нужно скрыть
+    LIBRARY_MODULES = {
+        'pymongo', 'motor', 'aiogram', 'uvicorn', 'aiohttp', 
+        'asyncio', 'urllib3', 'httpx', 'httpcore',
+        'pymongo.serverSelection', 'pymongo.connection', 
+        'pymongo.topology', 'pymongo.pool', 'pymongo.network',
+        'aiogram.event', 'aiogram.dispatcher', 'aiogram.client',
+        'uvicorn.access', 'uvicorn.error',
+        'aiohttp.client', 'aiohttp.server', 'aiohttp.web', 'aiohttp.connector'
+    }
+    
+    def filter(self, record):
+        # Пропускаем только WARNING и выше от библиотек
+        if record.levelno >= logging.WARNING:
+            return True
+        
+        # Проверяем имя функции (для случаев, когда логи идут через кастомные обработчики)
+        func_name = getattr(record, 'funcName', '')
+        if func_name in ['_debug_log', '_log', '_info_log', '_warning_log', '_error_log']:
+            # Это внутренние логи библиотек, скрываем их
+            return False
+        
+        # Проверяем имя логгера
+        logger_name = record.name
+        for lib_module in self.LIBRARY_MODULES:
+            if logger_name.startswith(lib_module):
+                return False
+        
+        # Проверяем имя файла (для случаев, когда логи идут через корневой логгер)
+        filename = record.filename if hasattr(record, 'filename') else ''
+        if filename:
+            # Скрываем логи из библиотечных файлов
+            lib_file_names = ['pymongo', 'motor', 'aiogram', 'uvicorn', 'aiohttp', 'logger.py']
+            if any(lib in filename.lower() for lib in lib_file_names):
+                # Но пропускаем наш собственный logger.py, если он не из библиотеки
+                if 'utils/logger.py' in filename or 'logging_config.py' in filename:
+                    return True
+                return False
+        
+        # Проверяем сообщение на наличие признаков библиотечных логов
+        message = record.getMessage() if hasattr(record, 'getMessage') else str(record.msg)
+        if message:
+            # Скрываем логи с типичными сообщениями библиотек
+            lib_messages = [
+                'topology monitoring', 'topology description', 'server selection',
+                'connection pool', 'connection checkout', 'connection checked',
+                'command started', 'command succeeded', 'server heartbeat',
+                'waiting for suitable server'
+            ]
+            if any(lib_msg.lower() in message.lower() for lib_msg in lib_messages):
+                return False
+        
+        # Пропускаем все остальные логи
+        return True
+
+# Применяем фильтр к обработчикам
+library_filter = LibraryLogFilter()
+file_handler.addFilter(library_filter)
+console_handler.addFilter(library_filter)
+
+# Отключаем DEBUG логи от библиотек - оставляем только WARNING и выше
+# MongoDB драйверы
+logging.getLogger('pymongo').setLevel(logging.WARNING)
+logging.getLogger('motor').setLevel(logging.WARNING)
+logging.getLogger('pymongo.serverSelection').setLevel(logging.WARNING)
+logging.getLogger('pymongo.connection').setLevel(logging.WARNING)
+logging.getLogger('pymongo.topology').setLevel(logging.WARNING)
+logging.getLogger('pymongo.pool').setLevel(logging.WARNING)
+logging.getLogger('pymongo.network').setLevel(logging.WARNING)
+
+# Aiogram (Telegram bot)
+logging.getLogger('aiogram').setLevel(logging.WARNING)
+logging.getLogger('aiogram.event').setLevel(logging.WARNING)
+logging.getLogger('aiogram.dispatcher').setLevel(logging.WARNING)
+logging.getLogger('aiogram.client').setLevel(logging.WARNING)
+
+# Uvicorn (FastAPI server)
+logging.getLogger('uvicorn').setLevel(logging.WARNING)
+logging.getLogger('uvicorn.access').setLevel(logging.WARNING)
+logging.getLogger('uvicorn.error').setLevel(logging.WARNING)
+
+# Aiohttp (используется aiogram)
+logging.getLogger('aiohttp').setLevel(logging.WARNING)
+logging.getLogger('aiohttp.client').setLevel(logging.WARNING)
+logging.getLogger('aiohttp.server').setLevel(logging.WARNING)
+logging.getLogger('aiohttp.web').setLevel(logging.WARNING)
+logging.getLogger('aiohttp.connector').setLevel(logging.WARNING)
+
+# Другие библиотеки
+logging.getLogger('asyncio').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
