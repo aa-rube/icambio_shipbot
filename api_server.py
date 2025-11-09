@@ -1,5 +1,6 @@
 import uvicorn
 import json
+import re
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from aiogram import Bot
@@ -10,6 +11,36 @@ from keyboards.orders_kb import new_order_kb
 from utils.logger import setup_logging
 from config import BOT_TOKEN, API_HOST, API_PORT
 from bson import ObjectId
+
+def clean_html_notes(notes: str) -> str:
+    """
+    Очищает HTML-теги из notes, оставляя только поддерживаемые Telegram теги.
+    Telegram поддерживает: <b>, <i>, <u>, <s>, <code>, <pre>, <a>, <tg-spoiler>
+    Удаляет все остальные теги, включая <p>, <div>, <span> и т.д.
+    """
+    if not notes:
+        return ""
+    
+    # Удаляем неподдерживаемые HTML-теги, но сохраняем их содержимое
+    # Сначала заменяем <p> и </p> на переносы строк
+    notes = re.sub(r'<p[^>]*>', '\n', notes, flags=re.IGNORECASE)
+    notes = re.sub(r'</p>', '\n', notes, flags=re.IGNORECASE)
+    
+    # Удаляем другие неподдерживаемые теги, но сохраняем содержимое
+    # Разрешаем только поддерживаемые Telegram теги
+    allowed_tags = ['b', 'i', 'u', 's', 'code', 'pre', 'a', 'tg-spoiler']
+    
+    # Удаляем все теги, кроме разрешенных
+    pattern = r'<(?!\/?(?:' + '|'.join(allowed_tags) + r')\b)[^>]+>'
+    notes = re.sub(pattern, '', notes, flags=re.IGNORECASE)
+    
+    # Очищаем множественные переносы строк
+    notes = re.sub(r'\n{3,}', '\n\n', notes)
+    
+    # Убираем пробелы в начале и конце
+    notes = notes.strip()
+    
+    return notes
 
 app = FastAPI(title="Courier Local API")
 bot = Bot(BOT_TOKEN)
@@ -98,7 +129,9 @@ async def create_order(payload: IncomingOrder):
             text += f"@{payload.client_tg.lstrip('@')}\n"
         
         if payload.notes:
-            text += f"\n📝 {payload.notes}\n"
+            cleaned_notes = clean_html_notes(payload.notes)
+            if cleaned_notes:
+                text += f"\n📝 {cleaned_notes}\n"
         
         if payload.brand or payload.source:
             text += "\n"
