@@ -110,6 +110,47 @@ async def cb_my_orders(call: CallbackQuery):
         logger.error(f"[ORDERS] Error in cb_my_orders for user {user_id} (chat_id: {chat_id}): {e}", exc_info=True)
         await call.answer("Произошла ошибка при загрузке заказов", show_alert=True)
 
+async def show_waiting_orders(chat_id: int, message: Message):
+    """Показывает только заказы со статусом waiting для курьера"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[ORDERS] show_waiting_orders called for chat_id: {chat_id}")
+    
+    db = await get_db()
+    
+    # Проверяем заказы с разными типами данных
+    orders_as_int = await db.couriers_deliveries.count_documents({"courier_tg_chat_id": int(chat_id), "status": "waiting"})
+    
+    # Определяем правильный тип для запроса
+    search_chat_id = int(chat_id) if orders_as_int > 0 else chat_id
+    
+    # Логируем запрос к БД
+    query = {
+        "courier_tg_chat_id": search_chat_id,
+        "status": "waiting"
+    }
+    logger.debug(f"[ORDERS] MongoDB query for waiting orders: {query}")
+    
+    cursor = db.couriers_deliveries.find(query).sort("priority", -1).sort("created_at", 1)
+    
+    found = False
+    order_count = 0
+    async for order in cursor:
+        found = True
+        order_count += 1
+        logger.info(f"[ORDERS] Found waiting order #{order_count}: external_id={order.get('external_id')}, priority={order.get('priority')}")
+        
+        text = format_order_text(order)
+        await message.answer(text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
+        logger.debug(f"[ORDERS] Sent waiting order {order.get('external_id')} to chat_id {chat_id}")
+    
+    if not found:
+        logger.info(f"[ORDERS] No waiting orders found for chat_id {chat_id}")
+        await message.answer("Нет активных заказов.")
+    else:
+        logger.info(f"[ORDERS] Successfully sent {order_count} waiting order(s) to chat_id {chat_id}")
+
 async def show_active_orders(chat_id: int, message: Message):
     import logging
     logger = logging.getLogger(__name__)
@@ -289,6 +330,9 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
     if courier:
         await notify_manager(bot, courier, f"📦 Курьер {courier['name']} завершил заказ {external_id} (оплата наличными)")
+    
+    # Показываем список активных заказов со статусом waiting
+    await show_waiting_orders(call.message.chat.id, call.message)
 
 @router.callback_query(F.data.startswith("order:done:"))
 async def cb_order_done(call: CallbackQuery):

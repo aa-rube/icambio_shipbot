@@ -84,3 +84,7 @@ async def handle_photo(message: Message, bot: Bot):
     courier = await db.couriers.find_one({"tg_chat_id": chat_id})
     if courier:
         await notify_manager(bot, courier, f"📦 Курьер {courier['name']} завершил заказ {external_id}")
+    
+    # Показываем список активных заказов со статусом waiting
+    from handlers.orders import show_waiting_orders
+    await show_waiting_orders(chat_id, message)
