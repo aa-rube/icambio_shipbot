@@ -348,6 +348,91 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     # Показываем список активных заказов со статусом waiting
     await show_waiting_orders(call.message.chat.id, call.message)
 
+@router.callback_query(F.data.startswith("order:check_payment:"))
+async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
+    import logging
+    logger = logging.getLogger(__name__)
+    external_id = call.data.split(":", 2)[2]
+    logger.info(f"[ORDERS] 🔍 Пользователь {call.from_user.id} проверяет оплату заказа {external_id}")
+    
+    db = await get_db()
+    logger.debug(f"[ORDERS] 🔍 Поиск заказа {external_id}")
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    if not order:
+        logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} не найден")
+        await call.answer("Заказ не найден", show_alert=True)
+        return
+    
+    # Показываем, что идет проверка
+    await call.answer("Проверяю статус оплаты...", show_alert=False)
+    
+    # Получаем статус оплаты из Odoo
+    # external_id должен быть ID лида в Odoo
+    try:
+        lead_id = int(external_id)
+    except ValueError:
+        logger.error(f"[ORDERS] ⚠️ external_id {external_id} не является числом, не могу запросить статус из Odoo")
+        await call.message.answer("❌ Не удалось проверить оплату: неверный формат ID заказа")
+        return
+    
+    from utils.odoo import get_lead_payment_status
+    odoo_payment_status = await get_lead_payment_status(lead_id)
+    
+    if odoo_payment_status is None:
+        logger.warning(f"[ORDERS] ⚠️ Не удалось получить статус оплаты из Odoo для lead_id {lead_id}")
+        await call.message.answer("❌ Не удалось проверить оплату. Попробуйте позже.")
+        return
+    
+    # Сохраняем старый статус для логирования
+    old_payment_status = order.get("payment_status")
+    
+    # Маппинг статуса из Odoo в наш формат
+    # Odoo возвращает: 'paid', 'not_paid', 'refund'
+    # Наш формат: 'PAID', 'NOT_PAID', 'REFUND'
+    payment_status_mapping = {
+        'paid': 'PAID',
+        'not_paid': 'NOT_PAID',
+        'refund': 'REFUND'
+    }
+    new_payment_status = payment_status_mapping.get(odoo_payment_status, 'NOT_PAID')
+    
+    # Обновляем статус оплаты в базе данных
+    logger.debug(f"[ORDERS] 💾 Обновление статуса оплаты заказа {external_id} с '{old_payment_status}' на '{new_payment_status}'")
+    await db.couriers_deliveries.update_one(
+        {"external_id": external_id},
+        {
+            "$set": {
+                "payment_status": new_payment_status,
+                "updated_at": utcnow_iso()
+            }
+        }
+    )
+    
+    # Получаем обновленный заказ
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    
+    # Логируем действие
+    from db.models import Action
+    await Action.log(db, call.from_user.id, "payment_checked", order_id=external_id, details={
+        "old_status": old_payment_status,
+        "new_status": new_payment_status,
+        "odoo_status": odoo_payment_status
+    })
+    
+    # Обновляем сообщение с заказом
+    text = format_order_text(order)
+    from keyboards.orders_kb import in_transit_kb
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=in_transit_kb(external_id, order))
+    
+    # Показываем результат проверки
+    status_text = {
+        'PAID': '✅ Оплата подтверждена',
+        'NOT_PAID': '❌ Заказ не оплачен',
+        'REFUND': '🔄 Возврат средств'
+    }
+    await call.message.answer(f"🔍 {status_text.get(new_payment_status, 'Статус обновлен')}")
+    logger.info(f"[ORDERS] ✅ Статус оплаты проверен для заказа {external_id}: {new_payment_status}")
+
 @router.callback_query(F.data.startswith("order:done:"))
 async def cb_order_done(call: CallbackQuery):
     import logging
@@ -363,10 +448,10 @@ async def cb_order_done(call: CallbackQuery):
         await call.answer("Заказ не найден", show_alert=True)
         return
     
-    # Если оплата наличными и статус оплаты "не оплачен", не позволяем завершить заказ
-    if order.get("is_cash_payment") and order.get("payment_status") == "NOT_PAID":
+    # Если статус оплаты "не оплачен", не позволяем завершить заказ
+    if order.get("payment_status") == "NOT_PAID":
         logger.warning(f"[ORDERS] ⚠️ Попытка завершить заказ {external_id} без оплаты")
-        await call.answer("Сначала примите оплату", show_alert=True)
+        await call.answer("Сначала проверьте оплату", show_alert=True)
         return
     
     redis = get_redis()

@@ -284,3 +284,42 @@ async def find_courier_by_tg_chat_id(courier_tg_chat_id: str) -> Optional[Dict[s
         logger.debug(f"Courier with TG ID {courier_tg_chat_id} not found in Odoo")
         return None
 
+async def get_lead_payment_status(lead_id: int) -> Optional[str]:
+    """
+    Получает статус оплаты заявки (lead) из Odoo по ID лида
+    
+    Args:
+        lead_id: ID лида в Odoo
+        
+    Returns:
+        Статус оплаты ('paid', 'not_paid', 'refund') или None в случае ошибки
+    """
+    try:
+        # Преобразуем lead_id в int, если это строка
+        if isinstance(lead_id, str):
+            lead_id = int(lead_id)
+        
+        # Получаем данные лида из Odoo, запрашивая только поле payment_status
+        # Для метода read: args = [[id1, id2, ...]], kwargs = {"fields": ["field1", "field2", ...]}
+        result = await odoo_call(
+            "call",
+            "crm.lead",
+            "read",
+            [[lead_id]],  # Список ID в двойном массиве
+            {"fields": ["payment_status"]}  # Поля в kwargs
+        )
+        
+        if result and len(result) > 0:
+            payment_status = result[0].get("payment_status")
+            logger.debug(f"Payment status for lead {lead_id}: {payment_status}")
+            return payment_status
+        else:
+            logger.warning(f"Lead {lead_id} not found in Odoo")
+            return None
+    except ValueError:
+        logger.error(f"Invalid lead_id format: {lead_id}")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting payment status for lead {lead_id}: {e}", exc_info=True)
+        return None
+
