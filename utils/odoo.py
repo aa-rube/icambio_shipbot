@@ -1,7 +1,7 @@
 import aiohttp
 import logging
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from config import ODOO_URL, ODOO_DB, ODOO_LOGIN, ODOO_API_KEY
 
 logger = logging.getLogger(__name__)
@@ -283,6 +283,68 @@ async def find_courier_by_tg_chat_id(courier_tg_chat_id: str) -> Optional[Dict[s
     else:
         logger.debug(f"Courier with TG ID {courier_tg_chat_id} not found in Odoo")
         return None
+
+async def delete_courier(courier_tg_chat_id: str) -> bool:
+    """
+    Удаляет курьера из Odoo по Telegram Chat ID
+    
+    Args:
+        courier_tg_chat_id: Telegram Chat ID курьера (строка)
+        
+    Returns:
+        True если успешно удалено, False в противном случае
+    """
+    # Сначала находим курьера по courier_tg_chat_id через search
+    search_result = await odoo_call(
+        "call",
+        "courier.person",
+        "search",
+        [
+            [["courier_tg_chat_id", "=", str(courier_tg_chat_id)]]
+        ]
+    )
+    
+    if not search_result or len(search_result) == 0:
+        logger.warning(f"Courier with TG ID {courier_tg_chat_id} not found in Odoo, nothing to delete")
+        return False
+    
+    # Получаем внутренний ID Odoo из результата search
+    odoo_internal_id = search_result[0]
+    
+    # Удаляем курьера используя метод unlink
+    # В Odoo unlink принимает список ID: [[id1, id2, ...]]
+    result = await odoo_call("call", "courier.person", "unlink", [[odoo_internal_id]])
+    
+    if result:
+        logger.info(f"Courier {courier_tg_chat_id} (Odoo ID: {odoo_internal_id}) deleted from Odoo")
+        return True
+    else:
+        logger.warning(f"Failed to delete courier {courier_tg_chat_id} from Odoo")
+        return False
+
+async def get_all_couriers_from_odoo() -> List[Dict[str, Any]]:
+    """
+    Получает всех курьеров из Odoo
+    
+    Returns:
+        Список курьеров из Odoo с полями: id, name, phone, courier_tg_chat_id, is_online
+    """
+    result = await odoo_call(
+        "call",
+        "courier.person",
+        "search_read",
+        [
+            [],  # Пустой фильтр - получаем всех курьеров
+            ["id", "name", "phone", "courier_tg_chat_id", "is_online"]
+        ]
+    )
+    
+    if result and isinstance(result, list):
+        logger.debug(f"Found {len(result)} couriers in Odoo")
+        return result
+    else:
+        logger.warning("Failed to get couriers from Odoo or empty result")
+        return []
 
 async def get_lead(lead_id: int) -> Optional[Dict[str, Any]]:
     """

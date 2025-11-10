@@ -6,6 +6,7 @@ def admin_main_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="➕ Добавить курьера", callback_data="admin:add_user"),
             InlineKeyboardButton(text="➖ Удалить курьера", callback_data="admin:del_user")
         ],
+        [InlineKeyboardButton(text="🔄 Синхронизация с Odoo", callback_data="admin:sync_odoo")],
         [InlineKeyboardButton(text="🚚 Курьеры на смене", callback_data="admin:on_shift")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin:broadcast")],
     ]

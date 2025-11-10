@@ -244,17 +244,37 @@ async def cb_delete_user(call: CallbackQuery):
     chat_id = int(call.data.split(":", 2)[2])
     logger.info(f"[ADMIN] 🗑️ Админ {call.from_user.id} удаляет пользователя {chat_id}")
     db = await get_db()
+    
+    # Получаем данные курьера перед удалением для логирования
+    courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+    courier_name = courier.get("name", "Unknown") if courier else "Unknown"
+    
+    # Удаление курьера из Odoo
+    odoo_deleted = False
+    try:
+        from utils.odoo import delete_courier
+        logger.debug(f"[ADMIN] 🔌 Удаление курьера из Odoo для пользователя {chat_id}")
+        odoo_result = await delete_courier(str(chat_id))
+        if odoo_result:
+            logger.info(f"[ADMIN] ✅ Курьер удален из Odoo для пользователя {chat_id}")
+            odoo_deleted = True
+        else:
+            logger.warning(f"[ADMIN] ⚠️ Не удалось удалить курьера из Odoo для пользователя {chat_id} (возможно, не был создан)")
+    except Exception as e:
+        logger.error(f"[ADMIN] ❌ Ошибка удаления курьера из Odoo: {e}", exc_info=True)
+    
     logger.debug(f"[ADMIN] 💾 Удаление курьера {chat_id} из БД")
     result = await db.couriers.delete_one({"tg_chat_id": chat_id})
     
     from db.models import Action
-    await Action.log(db, call.from_user.id, "admin_del_user", details={"deleted_user_id": chat_id})
+    await Action.log(db, call.from_user.id, "admin_del_user", details={"deleted_user_id": chat_id, "name": courier_name})
     logger.debug(f"[ADMIN] 📝 Действие 'admin_del_user' залогировано")
     
     if result.deleted_count > 0:
-        logger.info(f"[ADMIN] ✅ Админ {call.from_user.id} удалил пользователя {chat_id}")
+        logger.info(f"[ADMIN] ✅ Админ {call.from_user.id} удалил пользователя {chat_id} ({courier_name}), Odoo: {'удален' if odoo_deleted else 'не найден/ошибка'}")
+        odoo_status = "\n✅ Odoo: удален" if odoo_deleted else "\n⚠️ Odoo: не найден или ошибка"
         await call.message.edit_text(
-            f"✅ Пользователь {chat_id} удален",
+            f"✅ Пользователь {chat_id} удален{odoo_status}",
             reply_markup=admin_main_kb()
         )
     else:
@@ -264,6 +284,99 @@ async def cb_delete_user(call: CallbackQuery):
             reply_markup=admin_main_kb()
         )
     await call.answer()
+
+@router.callback_query(F.data == "admin:sync_odoo")
+async def cb_sync_odoo(call: CallbackQuery):
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        logger.warning(f"[ADMIN] ⚠️ Доступ запрещен для пользователя {call.from_user.id}")
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    logger.info(f"[ADMIN] 🔄 Админ {call.from_user.id} запускает синхронизацию с Odoo")
+    
+    # Показываем сообщение о начале синхронизации
+    await call.message.edit_text("🔄 Синхронизация с Odoo...\n\nПожалуйста, подождите...")
+    await call.answer()
+    
+    db = await get_db()
+    
+    try:
+        # Получаем всех курьеров из Odoo
+        from utils.odoo import get_all_couriers_from_odoo, create_courier, delete_courier
+        logger.debug(f"[ADMIN] 🔍 Получение всех курьеров из Odoo...")
+        odoo_couriers = await get_all_couriers_from_odoo()
+        
+        # Получаем всех курьеров из бота (MongoDB)
+        logger.debug(f"[ADMIN] 🔍 Получение всех курьеров из бота...")
+        bot_couriers = await db.couriers.find({}).to_list(length=None)
+        
+        # Создаем множества courier_tg_chat_id для сравнения
+        odoo_tg_ids = set()
+        for courier in odoo_couriers:
+            tg_id = courier.get("courier_tg_chat_id")
+            if tg_id:
+                odoo_tg_ids.add(str(tg_id))
+        
+        bot_tg_ids = set()
+        for courier in bot_couriers:
+            tg_id = courier.get("tg_chat_id")
+            if tg_id:
+                bot_tg_ids.add(str(tg_id))
+        
+        logger.info(f"[ADMIN] 📊 Статистика: Odoo={len(odoo_tg_ids)}, Бот={len(bot_tg_ids)}")
+        
+        # Находим курьеров, которые есть в Odoo, но нет в боте - удаляем из Odoo
+        to_delete_from_odoo = odoo_tg_ids - bot_tg_ids
+        deleted_count = 0
+        for tg_id in to_delete_from_odoo:
+            logger.debug(f"[ADMIN] 🗑️ Удаление курьера {tg_id} из Odoo (нет в боте)")
+            if await delete_courier(tg_id):
+                deleted_count += 1
+        
+        # Находим курьеров, которые есть в боте, но нет в Odoo - добавляем в Odoo
+        to_add_to_odoo = bot_tg_ids - odoo_tg_ids
+        added_count = 0
+        for tg_id in to_add_to_odoo:
+            # Находим курьера в боте
+            courier = next((c for c in bot_couriers if str(c.get("tg_chat_id")) == tg_id), None)
+            if courier:
+                name = courier.get("name", f"courier_{tg_id}")
+                is_on_shift = courier.get("is_on_shift", False)
+                logger.debug(f"[ADMIN] ➕ Добавление курьера {tg_id} ({name}) в Odoo")
+                if await create_courier(
+                    name=name,
+                    courier_tg_chat_id=tg_id,
+                    phone=None,
+                    is_online=is_on_shift
+                ):
+                    added_count += 1
+        
+        # Формируем сообщение с результатами
+        result_text = (
+            f"✅ Синхронизация завершена\n\n"
+            f"📊 Статистика:\n"
+            f"• Курьеров в Odoo: {len(odoo_tg_ids)}\n"
+            f"• Курьеров в боте: {len(bot_tg_ids)}\n\n"
+            f"🔄 Изменения:\n"
+            f"• Удалено из Odoo: {deleted_count}\n"
+            f"• Добавлено в Odoo: {added_count}\n"
+        )
+        
+        if deleted_count == 0 and added_count == 0:
+            result_text += "\n✨ Все курьеры синхронизированы!"
+        
+        logger.info(f"[ADMIN] ✅ Синхронизация завершена: удалено={deleted_count}, добавлено={added_count}")
+        await call.message.edit_text(result_text, reply_markup=admin_main_kb())
+        
+    except Exception as e:
+        logger.error(f"[ADMIN] ❌ Ошибка синхронизации с Odoo: {e}", exc_info=True)
+        await call.message.edit_text(
+            f"❌ Ошибка синхронизации с Odoo\n\n{str(e)}",
+            reply_markup=admin_main_kb()
+        )
 
 @router.callback_query(F.data == "admin:on_shift")
 async def cb_on_shift_couriers(call: CallbackQuery):
