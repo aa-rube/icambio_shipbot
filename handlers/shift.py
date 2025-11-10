@@ -231,6 +231,9 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
                 await message_or_call.answer("❌ Пользователь не найден")
         return False
     
+    # Сохраняем время начала смены для подсчета заказов
+    shift_started_at = courier.get("shift_started_at")
+    
     # Check for unfinished orders
     logger.debug(f"[SHIFT] 🔍 Проверка незавершенных заказов для chat_id: {chat_id}")
     unfinished = await db.couriers_deliveries.count_documents({
@@ -245,6 +248,19 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
             else:  # Message
                 await message_or_call.answer(f"❌ Нельзя завершить смену! У вас {unfinished} незавершенных заказов")
         return False
+
+    # Подсчет заказов за смену
+    orders_count = 0
+    if shift_started_at:
+        try:
+            logger.debug(f"[SHIFT] 📊 Подсчет заказов за смену с {shift_started_at}")
+            orders_count = await db.couriers_deliveries.count_documents({
+                "courier_tg_chat_id": chat_id,
+                "created_at": {"$gte": shift_started_at}
+            })
+            logger.info(f"[SHIFT] 📊 Заказов за смену: {orders_count}")
+        except Exception as e:
+            logger.warning(f"[SHIFT] ⚠️ Ошибка подсчета заказов за смену: {e}", exc_info=True)
 
     logger.debug(f"[SHIFT] 💾 Обновление статуса курьера: is_on_shift=False")
     await db.couriers.update_one({"_id": courier["_id"]}, {"$set": {"is_on_shift": False}, "$unset": {"current_shift_id": ""}})
@@ -283,17 +299,24 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
     await send_webhook("shift_end", webhook_data)
     logger.debug(f"[SHIFT] ✅ Webhook 'shift_end' отправлен")
 
+    # Формируем сообщение о завершении смены
+    shift_message = (
+        f"💤 Смена завершена\n\n"
+        f"📦 Заказов за смену: {orders_count}\n\n"
+        f"Хорошей передышки!"
+    )
+    
     # Отправка сообщения курьеру
     if message_or_call:
         if hasattr(message_or_call, 'edit_text'):  # CallbackQuery
             await message_or_call.edit_text(
-                "💤 Смена завершена\nХорошей передышки!",
+                shift_message,
                 reply_markup=main_menu(is_on_shift=False)
             )
             await message_or_call.answer()
         else:  # Message
             await message_or_call.answer(
-                "💤 Смена завершена\nХорошей передышки!",
+                shift_message,
                 reply_markup=main_menu(is_on_shift=False)
             )
     
