@@ -417,12 +417,14 @@ async def send_message_to_lead_chatter(lead_id: int, message_body: str) -> bool:
             lead_id = int(lead_id)
         
         # Отправляем сообщение в чаттер лида через метод message_post
-        # Для метода message_post: args = [[id1, id2, ...], {body: "текст сообщения"}]
+        # Для метода message_post: args = [[id1, id2, ...]], kwargs = {"body": "текст", "message_type": "comment"}
+        # message_post принимает аргументы как keyword arguments, а не позиционные
         result = await odoo_call(
             "call",
             "crm.lead",
             "message_post",
-            [[lead_id], {"body": message_body}]
+            [[lead_id]],  # Только список ID записей
+            {"body": message_body, "message_type": "comment"}  # Аргументы передаются через kwargs
         )
         
         if result:
