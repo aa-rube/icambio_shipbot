@@ -34,9 +34,9 @@ async def run_bot():
     dp.include_router(start.router)
     dp.include_router(shift.router)
     dp.include_router(location.router)
+    dp.include_router(report.router)  # Регистрируем раньше orders, чтобы команда /report обрабатывалась раньше
     dp.include_router(orders.router)
     dp.include_router(photo.router)
-    dp.include_router(report.router)
     dp.include_router(errors.router)
 
     try:

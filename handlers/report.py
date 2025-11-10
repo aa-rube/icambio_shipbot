@@ -18,6 +18,9 @@ async def cmd_report(message: Message, state: FSMContext):
     """Команда для отправки сообщения разработчику о проблемах"""
     logger.info(f"[REPORT] 📝 Пользователь {message.from_user.id} использует команду /report")
     
+    # Сбрасываем предыдущее состояние FSM, если оно было установлено
+    await state.clear()
+    
     if not DEV_CHAT_ID:
         await message.answer(
             "❌ Функция отправки сообщений разработчику временно недоступна.\n"
@@ -40,6 +43,11 @@ async def cmd_report(message: Message, state: FSMContext):
 @router.message(ReportStates.waiting_report_text)
 async def process_report(message: Message, state: FSMContext, bot: Bot):
     """Обработка текста сообщения для разработчика"""
+    # Если пользователь отправил команду, сбрасываем состояние
+    if message.text and message.text.startswith('/'):
+        await state.clear()
+        return
+    
     logger.info(f"[REPORT] 📨 Пользователь {message.from_user.id} отправил сообщение разработчику")
     
     if not DEV_CHAT_ID:
