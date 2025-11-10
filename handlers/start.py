@@ -26,6 +26,8 @@ async def _ensure_courier(db, chat_id: int, tg_user) -> dict:
 
 @router.message(F.text == "/start")
 @router.message(F.text == "start")
+@router.message(F.text == "/main")
+@router.message(F.text == "main")
 async def cmd_start(message: Message):
     import logging
     logger = logging.getLogger(__name__)

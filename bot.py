@@ -2,7 +2,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from handlers import start, shift, orders, photo, errors, admin, location
+from handlers import start, shift, orders, photo, errors, admin, location, report
 from utils.logger import setup_logging
 from db.mongo import init_indexes
 from config import BOT_TOKEN, API_HOST, API_PORT
@@ -36,6 +36,7 @@ async def run_bot():
     dp.include_router(location.router)
     dp.include_router(orders.router)
     dp.include_router(photo.router)
+    dp.include_router(report.router)
     dp.include_router(errors.router)
 
     try:

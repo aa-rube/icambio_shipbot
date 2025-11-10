@@ -11,9 +11,9 @@ import logging
 router = Router()
 logger = logging.getLogger(__name__)
 
-@router.callback_query(F.data == "shift:start")
-async def cb_start_shift(call: CallbackQuery):
-    await call.message.edit_text(
+def get_shift_start_instruction() -> str:
+    """Возвращает инструкцию для начала смены"""
+    return (
         "📍 Для начала смены отправь свою геолокацию:\n\n"
         "1️⃣ Нажми на скрепку (📎)\n"
         "2️⃣ Выбери 'Геопозиция'\n"
@@ -21,6 +21,17 @@ async def cb_start_shift(call: CallbackQuery):
         "4️⃣ Установи время минимум 8 часов\n"
         "5️⃣ Нажми 'Отправить'"
     )
+
+@router.message(F.text == "/online")
+@router.message(F.text == "online")
+async def cmd_online(message: Message):
+    """Команда для начала смены"""
+    logger.info(f"[SHIFT] 📍 Пользователь {message.from_user.id} использует команду /online")
+    await message.answer(get_shift_start_instruction())
+
+@router.callback_query(F.data == "shift:start")
+async def cb_start_shift(call: CallbackQuery):
+    await call.message.edit_text(get_shift_start_instruction())
     await call.answer()
 
 @router.message(F.location)
@@ -147,19 +158,30 @@ async def handle_location(message: Message, bot: Bot):
     except Exception as e:
         logger.error(f"[SHIFT] ❌ Ошибка в handle_location: {e}", exc_info=True)
 
-@router.callback_query(F.data == "shift:end")
-async def cb_end_shift(call: CallbackQuery, bot: Bot):
-    logger.info(f"[SHIFT] 🛑 Пользователь {call.from_user.id} завершает смену")
+async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=None):
+    """
+    Общая логика завершения смены
+    Может быть вызвана как из callback, так и из message handler
     
+    Args:
+        chat_id: ID чата курьера
+        user_id: ID пользователя
+        bot: Bot instance
+        message_or_call: Message или CallbackQuery объект (для отправки ответа)
+    """
     db = await get_db()
     redis = get_redis()
-    chat_id = call.message.chat.id
+    
     logger.debug(f"[SHIFT] 🔍 Поиск курьера по chat_id: {chat_id}")
     courier = await db.couriers.find_one({"tg_chat_id": chat_id})
     if not courier:
         logger.warning(f"[SHIFT] ⚠️ Курьер не найден: chat_id={chat_id}")
-        await call.answer("Пользователь не найден", show_alert=True)
-        return
+        if message_or_call:
+            if hasattr(message_or_call, 'answer'):  # CallbackQuery
+                await message_or_call.answer("Пользователь не найден", show_alert=True)
+            else:  # Message
+                await message_or_call.answer("❌ Пользователь не найден")
+        return False
     
     # Check for unfinished orders
     logger.debug(f"[SHIFT] 🔍 Проверка незавершенных заказов для chat_id: {chat_id}")
@@ -169,8 +191,12 @@ async def cb_end_shift(call: CallbackQuery, bot: Bot):
     })
     if unfinished > 0:
         logger.warning(f"[SHIFT] ⚠️ Попытка завершить смену с {unfinished} незавершенными заказами")
-        await call.answer(f"Нельзя завершить смену! У вас {unfinished} незавершенных заказов", show_alert=True)
-        return
+        if message_or_call:
+            if hasattr(message_or_call, 'answer'):  # CallbackQuery
+                await message_or_call.answer(f"Нельзя завершить смену! У вас {unfinished} незавершенных заказов", show_alert=True)
+            else:  # Message
+                await message_or_call.answer(f"❌ Нельзя завершить смену! У вас {unfinished} незавершенных заказов")
+        return False
 
     logger.debug(f"[SHIFT] 💾 Обновление статуса курьера: is_on_shift=False")
     await db.couriers.update_one({"_id": courier["_id"]}, {"$set": {"is_on_shift": False}, "$unset": {"current_shift_id": ""}})
@@ -179,8 +205,8 @@ async def cb_end_shift(call: CallbackQuery, bot: Bot):
     await redis.delete(f"courier:loc:{chat_id}")
 
     from db.models import Action
-    await Action.log(db, call.from_user.id, "shift_end")
-    logger.info(f"[SHIFT] ✅ Пользователь {call.from_user.id} завершил смену")
+    await Action.log(db, user_id, "shift_end")
+    logger.info(f"[SHIFT] ✅ Пользователь {user_id} завершил смену")
 
     # Обновляем данные курьера после всех изменений
     courier = await db.couriers.find_one({"_id": courier["_id"]})
@@ -188,7 +214,6 @@ async def cb_end_shift(call: CallbackQuery, bot: Bot):
     # Обновление статуса в Odoo
     try:
         from utils.odoo import update_courier_status
-        # courier_tg_chat_id используется как основной идентификатор
         logger.debug(f"[SHIFT] 🔌 Обновление статуса курьера {chat_id} в Odoo: is_online=False")
         success = await update_courier_status(str(chat_id), is_online=False)
         if success:
@@ -210,11 +235,19 @@ async def cb_end_shift(call: CallbackQuery, bot: Bot):
     await send_webhook("shift_end", webhook_data)
     logger.debug(f"[SHIFT] ✅ Webhook 'shift_end' отправлен")
 
-    logger.debug(f"[SHIFT] 📤 Отправка сообщения курьеру о завершении смены")
-    await call.message.edit_text(
-        "💤 Смена завершена\nХорошей передышки!",
-        reply_markup=main_menu(is_on_shift=False)
-    )
+    # Отправка сообщения курьеру
+    if message_or_call:
+        if hasattr(message_or_call, 'edit_text'):  # CallbackQuery
+            await message_or_call.edit_text(
+                "💤 Смена завершена\nХорошей передышки!",
+                reply_markup=main_menu(is_on_shift=False)
+            )
+            await message_or_call.answer()
+        else:  # Message
+            await message_or_call.answer(
+                "💤 Смена завершена\nХорошей передышки!",
+                reply_markup=main_menu(is_on_shift=False)
+            )
     
     if MANAGER_CHAT_ID:
         notification_text = f"🔴 Курьер {courier['name']} завершил смену\nID: {chat_id}"
@@ -225,4 +258,16 @@ async def cb_end_shift(call: CallbackQuery, bot: Bot):
         except Exception as e:
             logger.warning(f"[SHIFT] ⚠️ Ошибка уведомления менеджера: {e}", exc_info=True)
     
-    await call.answer()
+    return True
+
+@router.message(F.text == "/offline")
+@router.message(F.text == "offline")
+async def cmd_offline(message: Message, bot: Bot):
+    """Команда для завершения смены"""
+    logger.info(f"[SHIFT] 🛑 Пользователь {message.from_user.id} использует команду /offline")
+    await end_shift_logic(message.chat.id, message.from_user.id, bot, message)
+
+@router.callback_query(F.data == "shift:end")
+async def cb_end_shift(call: CallbackQuery, bot: Bot):
+    logger.info(f"[SHIFT] 🛑 Пользователь {call.from_user.id} завершает смену")
+    await end_shift_logic(call.message.chat.id, call.from_user.id, bot, call)

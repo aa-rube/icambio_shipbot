@@ -42,6 +42,14 @@ def format_order_text(order: dict) -> str:
     """
     status_emoji = {"waiting": "⏳", "in_transit": "🚗", "done": "✅", "cancelled": "❌"}
     status_text = {"waiting": "Ожидает", "in_transit": "В пути", "done": "Выполнен", "cancelled": "Отменен"}
+    
+    # Маппинг статуса оплаты на русский язык для курьеров
+    payment_status_text = {
+        'PAID': 'Оплачен',
+        'NOT_PAID': 'Не оплачен',
+        'REFUND': 'Отмена заказа'
+    }
+    
     priority_emoji = "🔴" if order.get("priority", 0) >= 5 else "🟡" if order.get("priority", 0) >= 3 else "⚪"
     
     text = f"{status_emoji.get(order.get('status', 'waiting'), '⏳')} Статус: {status_text.get(order.get('status', 'waiting'), 'Ожидает')}\n\n"
@@ -50,7 +58,10 @@ def format_order_text(order: dict) -> str:
     if order.get("map_url"):
         text += f"🗺 <a href='{order['map_url']}'>Карта</a>\n\n"
     
-    text += f"💳 {order.get('payment_status', 'NOT_PAID')} | {priority_emoji} Приоритет: {order.get('priority', 0)}\n"
+    # Используем маппинг для статуса оплаты
+    payment_status = order.get('payment_status', 'NOT_PAID')
+    payment_status_ru = payment_status_text.get(payment_status, payment_status)
+    text += f"💳 {payment_status_ru} | {priority_emoji} Приоритет: {order.get('priority', 0)}\n"
     
     if order.get("delivery_time"):
         text += f"⏰ {order['delivery_time']}\n"

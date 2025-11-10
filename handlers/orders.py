@@ -404,7 +404,7 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     status_text = {
         'PAID': '✅ Оплата подтверждена',
         'NOT_PAID': '❌ Заказ не оплачен',
-        'REFUND': '🔄 Возврат средств'
+        'REFUND': '🔄 Отмена заказа'
     }
     await call.message.answer(f"🔍 {status_text.get(new_payment_status, 'Статус обновлен')}")
     logger.info(f"[ORDERS] ✅ Статус оплаты проверен для заказа {external_id}: {new_payment_status}")
