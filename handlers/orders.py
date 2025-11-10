@@ -384,9 +384,9 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
         await call.message.answer("❌ Не удалось проверить оплату. Попробуйте позже.")
         return
     
-    # Логируем все тело полученного объекта для отладки
-    logger.info(f"[ORDERS] 📋 Полный объект лида из Odoo (lead_id={lead_id}):")
-    logger.info(f"[ORDERS] 📋 Тело объекта: {json.dumps(lead_data, indent=2, ensure_ascii=False, default=str)}")
+    # Логируем все тело полученного объекта для отладки (DEBUG уровень)
+    logger.debug(f"[ORDERS] 📋 Полный объект лида из Odoo (lead_id={lead_id}):")
+    logger.debug(f"[ORDERS] 📋 Тело объекта: {json.dumps(lead_data, indent=2, ensure_ascii=False, default=str)}")
     
     # Получаем текущий статус оплаты из объекта лида
     odoo_payment_status = lead_data.get("payment_status")
@@ -399,31 +399,50 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     # Сохраняем старый статус для логирования
     old_payment_status = order.get("payment_status")
     
-    # Маппинг статуса из Odoo в наш формат
-    # Odoo возвращает: 'paid', 'not_paid', 'refund'
-    # Наш формат: 'PAID', 'NOT_PAID', 'REFUND'
-    payment_status_mapping = {
-        'paid': 'PAID',
-        'not_paid': 'NOT_PAID',
-        'refund': 'REFUND'
+    # Маппинг статуса из Odoo в наш формат и русские названия
+    PAYMENT_STATUS_MAPPING = {
+        'paid': ('PAID', 'Оплачен'),
+        'not_paid': ('NOT_PAID', 'Нет оплаты'),
+        'refund': ('REFUND', 'Возврат средств')
     }
-    new_payment_status = payment_status_mapping.get(odoo_payment_status, 'NOT_PAID')
     
-    # Устанавливаем статус в Odoo в зависимости от payment_status
-    # Если статус 'paid' - устанавливаем "Оплачен", если 'not_paid' - "Нет оплаты"
-    odoo_status_to_set = None
-    if odoo_payment_status == 'paid':
-        odoo_status_to_set = 'paid'  # "Оплачен"
-    elif odoo_payment_status == 'not_paid':
-        odoo_status_to_set = 'not_paid'  # "Нет оплаты"
+    # Получаем наш формат статуса и русское название
+    status_info = PAYMENT_STATUS_MAPPING.get(odoo_payment_status, ('NOT_PAID', 'Неизвестно'))
+    new_payment_status, status_name_ru = status_info
     
-    if odoo_status_to_set:
-        logger.info(f"[ORDERS] 🔄 Установка статуса оплаты в Odoo для lead_id {lead_id}: {odoo_status_to_set}")
-        update_result = await update_lead_payment_status(lead_id, odoo_status_to_set)
-        if update_result:
-            logger.info(f"[ORDERS] ✅ Статус оплаты успешно установлен в Odoo для lead_id {lead_id}: {odoo_status_to_set}")
+    # Устанавливаем статус в Odoo явно (даже если он уже такой же)
+    # Это гарантирует, что статус "Оплачен" или "Нет оплаты" установлен явно
+    logger.info(f"[ORDERS] 🔄 Установка статуса оплаты в Odoo для lead_id {lead_id}: {odoo_payment_status} ({status_name_ru})")
+    update_result = await update_lead_payment_status(lead_id, odoo_payment_status)
+    if update_result:
+        logger.info(f"[ORDERS] ✅ Статус оплаты успешно установлен в Odoo для lead_id {lead_id}: {status_name_ru}")
+    else:
+        logger.warning(f"[ORDERS] ⚠️ Не удалось установить статус оплаты в Odoo для lead_id {lead_id}")
+    
+    # Если оплата не оплачена, отправляем сообщение в чаттер лида
+    if odoo_payment_status == 'not_paid':
+        # Получаем информацию о курьере из базы данных
+        courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
+        if courier:
+            courier_name = courier.get("name", "Курьер")
+            courier_username = courier.get("username")
+            
+            # Формируем текст сообщения
+            username_part = f"(@{courier_username})" if courier_username else ""
+            message_text = f"Курьер {courier_name}{username_part} просит проверить и подтвердить оплату заказа."
+            
+            # Отправляем сообщение в чаттер лида от имени пользователя API ключа
+            from utils.odoo import send_message_to_lead_chatter
+            logger.info(f"[ORDERS] 💬 Отправка сообщения в чаттер лида {lead_id} о необходимости проверки оплаты")
+            chatter_result = await send_message_to_lead_chatter(lead_id, message_text)
+            if chatter_result:
+                logger.info(f"[ORDERS] ✅ Сообщение успешно отправлено в чаттер лида {lead_id}")
+            else:
+                logger.warning(f"[ORDERS] ⚠️ Не удалось отправить сообщение в чаттер лида {lead_id}")
         else:
-            logger.warning(f"[ORDERS] ⚠️ Не удалось установить статус оплаты в Odoo для lead_id {lead_id}")
+            logger.warning(f"[ORDERS] ⚠️ Курьер не найден в базе данных для chat_id {call.message.chat.id}")
+    else:
+        logger.debug(f"[ORDERS] 💰 Оплата есть (status: {odoo_payment_status}), сообщение в чаттер не отправляется")
     
     # Обновляем статус оплаты в базе данных
     logger.debug(f"[ORDERS] 💾 Обновление статуса оплаты заказа {external_id} с '{old_payment_status}' на '{new_payment_status}'")

@@ -400,3 +400,41 @@ async def update_lead_payment_status(lead_id: int, payment_status: str) -> bool:
         logger.error(f"Error updating payment status for lead {lead_id}: {e}", exc_info=True)
         return False
 
+async def send_message_to_lead_chatter(lead_id: int, message_body: str) -> bool:
+    """
+    Отправляет сообщение в чаттер лида в Odoo от имени пользователя API ключа
+    
+    Args:
+        lead_id: ID лида в Odoo
+        message_body: Текст сообщения для отправки в чаттер
+        
+    Returns:
+        True если успешно отправлено, False в противном случае
+    """
+    try:
+        # Преобразуем lead_id в int, если это строка
+        if isinstance(lead_id, str):
+            lead_id = int(lead_id)
+        
+        # Отправляем сообщение в чаттер лида через метод message_post
+        # Для метода message_post: args = [[id1, id2, ...], {body: "текст сообщения"}]
+        result = await odoo_call(
+            "call",
+            "crm.lead",
+            "message_post",
+            [[lead_id], {"body": message_body}]
+        )
+        
+        if result:
+            logger.info(f"Message sent to lead {lead_id} chatter successfully")
+            return True
+        else:
+            logger.warning(f"Failed to send message to lead {lead_id} chatter")
+            return False
+    except ValueError:
+        logger.error(f"Invalid lead_id format: {lead_id}")
+        return False
+    except Exception as e:
+        logger.error(f"Error sending message to lead {lead_id} chatter: {e}", exc_info=True)
+        return False
+
