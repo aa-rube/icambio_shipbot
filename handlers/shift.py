@@ -310,9 +310,10 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
     if message_or_call:
         # Проверяем, является ли это CallbackQuery (имеет атрибут message)
         if hasattr(message_or_call, 'message') and hasattr(message_or_call, 'answer'):  # CallbackQuery
+            # Убираем кнопки, чтобы сообщение не удалялось при клике на другие кнопки
             await message_or_call.message.edit_text(
                 shift_message,
-                reply_markup=main_menu(is_on_shift=False)
+                reply_markup=None
             )
             await message_or_call.answer()
         else:  # Message
