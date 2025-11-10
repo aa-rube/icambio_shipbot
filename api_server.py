@@ -84,11 +84,24 @@ async def create_order(payload: IncomingOrder):
     
     logger.info(f"[API] ✅ Заказ успешно создан: _id={order_doc['_id']}, external_id={payload.external_id}, courier_tg_chat_id={order_doc['courier_tg_chat_id']}")
 
-    # If courier on shift -> push Telegram message
+    # Проверка статуса смены курьера (Redis + MongoDB fallback)
     logger.debug(f"[API] 🔍 Проверка статуса смены курьера: tg_chat_id={courier['tg_chat_id']}")
-    is_on = await redis.get(f"courier:shift:{courier['tg_chat_id']}")
-    logger.debug(f"[API] 📊 Статус смены: is_on={is_on}, tg_chat_id={courier['tg_chat_id']}")
-    if is_on == "on":
+    is_on_redis = await redis.get(f"courier:shift:{courier['tg_chat_id']}")
+    is_on_mongo = courier.get("is_on_shift", False)
+    
+    logger.debug(f"[API] 📊 Статус смены: Redis={is_on_redis}, MongoDB={is_on_mongo}, tg_chat_id={courier['tg_chat_id']}")
+    
+    # Если ключ в Redis истек, но курьер на смене в MongoDB - восстанавливаем ключ
+    if is_on_redis != "on" and is_on_mongo:
+        logger.warning(f"[API] ⚠️ Ключ в Redis истек, но курьер на смене в MongoDB. Восстанавливаем ключ в Redis.")
+        from config import SHIFT_TTL
+        await redis.setex(f"courier:shift:{courier['tg_chat_id']}", SHIFT_TTL, "on")
+        is_on_redis = "on"
+        logger.info(f"[API] ✅ Ключ в Redis восстановлен для курьера {courier['tg_chat_id']}")
+    
+    # Отправляем сообщение, если курьер на смене (Redis или MongoDB)
+    is_on_shift = is_on_redis == "on" or is_on_mongo
+    if is_on_shift:
         logger.info(f"[API] 🚚 Курьер на смене, отправка уведомления в Telegram...")
         
         # Используем унифицированную функцию форматирования заказа
