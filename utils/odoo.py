@@ -284,6 +284,45 @@ async def find_courier_by_tg_chat_id(courier_tg_chat_id: str) -> Optional[Dict[s
         logger.debug(f"Courier with TG ID {courier_tg_chat_id} not found in Odoo")
         return None
 
+async def get_lead(lead_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает полный объект лида из Odoo по ID лида
+    
+    Args:
+        lead_id: ID лида в Odoo
+        
+    Returns:
+        Полный объект лида или None в случае ошибки
+    """
+    try:
+        # Преобразуем lead_id в int, если это строка
+        if isinstance(lead_id, str):
+            lead_id = int(lead_id)
+        
+        # Получаем все данные лида из Odoo (без указания полей - получим все)
+        # Для метода read: args = [[id1, id2, ...]], kwargs = {} (без fields - получим все поля)
+        result = await odoo_call(
+            "call",
+            "crm.lead",
+            "read",
+            [[lead_id]],  # Список ID в двойном массиве
+            {}  # Пустой kwargs - получим все поля
+        )
+        
+        if result and len(result) > 0:
+            lead_data = result[0]
+            logger.debug(f"Lead {lead_id} retrieved successfully")
+            return lead_data
+        else:
+            logger.warning(f"Lead {lead_id} not found in Odoo")
+            return None
+    except ValueError:
+        logger.error(f"Invalid lead_id format: {lead_id}")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting lead {lead_id}: {e}", exc_info=True)
+        return None
+
 async def get_lead_payment_status(lead_id: int) -> Optional[str]:
     """
     Получает статус оплаты заявки (lead) из Odoo по ID лида
@@ -322,4 +361,42 @@ async def get_lead_payment_status(lead_id: int) -> Optional[str]:
     except Exception as e:
         logger.error(f"Error getting payment status for lead {lead_id}: {e}", exc_info=True)
         return None
+
+async def update_lead_payment_status(lead_id: int, payment_status: str) -> bool:
+    """
+    Обновляет статус оплаты лида в Odoo
+    
+    Args:
+        lead_id: ID лида в Odoo
+        payment_status: Новый статус оплаты ('paid' для "Оплачен" или 'not_paid' для "Нет оплаты")
+        
+    Returns:
+        True если успешно обновлено, False в противном случае
+    """
+    try:
+        # Преобразуем lead_id в int, если это строка
+        if isinstance(lead_id, str):
+            lead_id = int(lead_id)
+        
+        # Обновляем статус оплаты в Odoo
+        # Для метода write: args = [[id1, id2, ...], {field: value, ...}]
+        result = await odoo_call(
+            "call",
+            "crm.lead",
+            "write",
+            [[lead_id], {"payment_status": payment_status}]
+        )
+        
+        if result:
+            logger.info(f"Lead {lead_id} payment status updated to '{payment_status}'")
+            return True
+        else:
+            logger.warning(f"Failed to update payment status for lead {lead_id}")
+            return False
+    except ValueError:
+        logger.error(f"Invalid lead_id format: {lead_id}")
+        return False
+    except Exception as e:
+        logger.error(f"Error updating payment status for lead {lead_id}: {e}", exc_info=True)
+        return False
 

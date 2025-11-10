@@ -351,6 +351,7 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
 @router.callback_query(F.data.startswith("order:check_payment:"))
 async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     import logging
+    import json
     logger = logging.getLogger(__name__)
     external_id = call.data.split(":", 2)[2]
     logger.info(f"[ORDERS] 🔍 Пользователь {call.from_user.id} проверяет оплату заказа {external_id}")
@@ -366,7 +367,7 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     # Показываем, что идет проверка
     await call.answer("Проверяю статус оплаты...", show_alert=False)
     
-    # Получаем статус оплаты из Odoo
+    # Получаем полный объект лида из Odoo
     # external_id должен быть ID лида в Odoo
     try:
         lead_id = int(external_id)
@@ -375,12 +376,24 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
         await call.message.answer("❌ Не удалось проверить оплату: неверный формат ID заказа")
         return
     
-    from utils.odoo import get_lead_payment_status
-    odoo_payment_status = await get_lead_payment_status(lead_id)
+    from utils.odoo import get_lead, update_lead_payment_status
+    lead_data = await get_lead(lead_id)
+    
+    if lead_data is None:
+        logger.warning(f"[ORDERS] ⚠️ Не удалось получить объект лида из Odoo для lead_id {lead_id}")
+        await call.message.answer("❌ Не удалось проверить оплату. Попробуйте позже.")
+        return
+    
+    # Логируем все тело полученного объекта для отладки
+    logger.info(f"[ORDERS] 📋 Полный объект лида из Odoo (lead_id={lead_id}):")
+    logger.info(f"[ORDERS] 📋 Тело объекта: {json.dumps(lead_data, indent=2, ensure_ascii=False, default=str)}")
+    
+    # Получаем текущий статус оплаты из объекта лида
+    odoo_payment_status = lead_data.get("payment_status")
     
     if odoo_payment_status is None:
-        logger.warning(f"[ORDERS] ⚠️ Не удалось получить статус оплаты из Odoo для lead_id {lead_id}")
-        await call.message.answer("❌ Не удалось проверить оплату. Попробуйте позже.")
+        logger.warning(f"[ORDERS] ⚠️ Поле payment_status не найдено в объекте лида {lead_id}")
+        await call.message.answer("❌ Не удалось определить статус оплаты.")
         return
     
     # Сохраняем старый статус для логирования
@@ -395,6 +408,22 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
         'refund': 'REFUND'
     }
     new_payment_status = payment_status_mapping.get(odoo_payment_status, 'NOT_PAID')
+    
+    # Устанавливаем статус в Odoo в зависимости от payment_status
+    # Если статус 'paid' - устанавливаем "Оплачен", если 'not_paid' - "Нет оплаты"
+    odoo_status_to_set = None
+    if odoo_payment_status == 'paid':
+        odoo_status_to_set = 'paid'  # "Оплачен"
+    elif odoo_payment_status == 'not_paid':
+        odoo_status_to_set = 'not_paid'  # "Нет оплаты"
+    
+    if odoo_status_to_set:
+        logger.info(f"[ORDERS] 🔄 Установка статуса оплаты в Odoo для lead_id {lead_id}: {odoo_status_to_set}")
+        update_result = await update_lead_payment_status(lead_id, odoo_status_to_set)
+        if update_result:
+            logger.info(f"[ORDERS] ✅ Статус оплаты успешно установлен в Odoo для lead_id {lead_id}: {odoo_status_to_set}")
+        else:
+            logger.warning(f"[ORDERS] ⚠️ Не удалось установить статус оплаты в Odoo для lead_id {lead_id}")
     
     # Обновляем статус оплаты в базе данных
     logger.debug(f"[ORDERS] 💾 Обновление статуса оплаты заказа {external_id} с '{old_payment_status}' на '{new_payment_status}'")
@@ -416,7 +445,8 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     await Action.log(db, call.from_user.id, "payment_checked", order_id=external_id, details={
         "old_status": old_payment_status,
         "new_status": new_payment_status,
-        "odoo_status": odoo_payment_status
+        "odoo_status": odoo_payment_status,
+        "odoo_lead_id": lead_id
     })
     
     # Обновляем сообщение с заказом
