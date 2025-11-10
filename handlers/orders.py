@@ -249,7 +249,7 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
             }
         }
     )
-    
+      
     # Удаляем флаг ожидания фотографий оплаты
     logger.debug(f"[ORDERS] 🗑️ Удаление флага ожидания фото оплаты для chat_id {call.message.chat.id}")
     await redis.delete(f"courier:payment_photo_wait:{call.message.chat.id}")
@@ -309,7 +309,7 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
         await call.message.answer("❌ Не удалось проверить оплату: неверный формат ID заказа")
         return
     
-    from utils.odoo import get_lead, update_lead_payment_status
+    from utils.odoo import get_lead
     lead_data = await get_lead(lead_id)
     
     if lead_data is None:
@@ -343,14 +343,8 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     status_info = PAYMENT_STATUS_MAPPING.get(odoo_payment_status, ('NOT_PAID', 'Неизвестно'))
     new_payment_status, status_name_ru = status_info
     
-    # Устанавливаем статус в Odoo явно (даже если он уже такой же)
-    # Это гарантирует, что статус "Оплачен" или "Нет оплаты" установлен явно
-    logger.info(f"[ORDERS] 🔄 Установка статуса оплаты в Odoo для lead_id {lead_id}: {odoo_payment_status} ({status_name_ru})")
-    update_result = await update_lead_payment_status(lead_id, odoo_payment_status)
-    if update_result:
-        logger.info(f"[ORDERS] ✅ Статус оплаты успешно установлен в Odoo для lead_id {lead_id}: {status_name_ru}")
-    else:
-        logger.warning(f"[ORDERS] ⚠️ Не удалось установить статус оплаты в Odoo для lead_id {lead_id}")
+    # При проверке статуса НЕ обновляем статус в Odoo - только читаем
+    # Обновление статуса происходит только когда курьер принимает оплату наличными
     
     # Если оплата не оплачена, отправляем сообщение в чаттер лида
     if odoo_payment_status == 'not_paid':
