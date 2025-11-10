@@ -6,6 +6,7 @@ from db.redis_client import get_redis
 from config import SHIFT_TTL, LOC_TTL, MANAGER_CHAT_ID
 from bson import ObjectId
 from datetime import datetime, timezone
+from typing import Tuple, Optional
 import logging
 
 router = Router()
@@ -22,16 +23,63 @@ def get_shift_start_instruction() -> str:
         "5️⃣ Нажми 'Отправить'"
     )
 
+def format_shift_start_time(shift_started_at: str) -> str:
+    """Форматирует дату и время начала смены для отображения"""
+    try:
+        # Парсим ISO формат даты
+        dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
+        # Форматируем в читаемый формат: ДД.ММ.ГГГГ ЧЧ:ММ
+        return dt.strftime("%d.%m.%Y %H:%M")
+    except Exception as e:
+        logger.warning(f"[SHIFT] ⚠️ Ошибка форматирования даты {shift_started_at}: {e}")
+        return shift_started_at
+
+async def check_shift_status(chat_id: int) -> Tuple[bool, Optional[str]]:
+    """
+    Проверяет статус смены курьера
+    
+    Returns:
+        Tuple[bool, Optional[str]]: (is_on_shift, shift_started_at)
+    """
+    db = await get_db()
+    courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+    if not courier:
+        return False, None
+    
+    is_on_shift = courier.get("is_on_shift", False)
+    shift_started_at = courier.get("shift_started_at")
+    
+    return is_on_shift, shift_started_at
+
 @router.message(F.text == "/online")
 @router.message(F.text == "online")
 async def cmd_online(message: Message):
     """Команда для начала смены"""
     logger.info(f"[SHIFT] 📍 Пользователь {message.from_user.id} использует команду /online")
-    await message.answer(get_shift_start_instruction())
+    
+    is_on_shift, shift_started_at = await check_shift_status(message.chat.id)
+    
+    if is_on_shift and shift_started_at:
+        formatted_time = format_shift_start_time(shift_started_at)
+        await message.answer(
+            f"✅ Вы уже на смене\n\n"
+            f"🕐 Начало смены: {formatted_time}"
+        )
+    else:
+        await message.answer(get_shift_start_instruction())
 
 @router.callback_query(F.data == "shift:start")
 async def cb_start_shift(call: CallbackQuery):
-    await call.message.edit_text(get_shift_start_instruction())
+    is_on_shift, shift_started_at = await check_shift_status(call.message.chat.id)
+    
+    if is_on_shift and shift_started_at:
+        formatted_time = format_shift_start_time(shift_started_at)
+        await call.message.edit_text(
+            f"✅ Вы уже на смене\n\n"
+            f"🕐 Начало смены: {formatted_time}"
+        )
+    else:
+        await call.message.edit_text(get_shift_start_instruction())
     await call.answer()
 
 @router.message(F.location)
