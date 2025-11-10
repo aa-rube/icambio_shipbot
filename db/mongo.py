@@ -30,3 +30,8 @@ async def init_indexes():
     await db.locations.create_index([("chat_id", ASCENDING), ("date", ASCENDING), ("shift_id", ASCENDING)])
     await db.locations.create_index([("timestamp_ns", DESCENDING)])
     await db.locations.create_index([("shift_id", ASCENDING)])
+    # Shift History
+    await db.shift_history.create_index([("courier_tg_chat_id", ASCENDING)])
+    await db.shift_history.create_index([("event", ASCENDING)])
+    await db.shift_history.create_index([("shift_id", ASCENDING)])
+    await db.shift_history.create_index([("timestamp", DESCENDING)])

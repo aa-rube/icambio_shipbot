@@ -152,9 +152,19 @@ async def handle_location(message: Message, bot: Bot):
         await db.locations.insert_one(location_doc)
         logger.info(f"[SHIFT] ✅ Локация сохранена в БД")
 
-        from db.models import Action
+        from db.models import Action, ShiftHistory
         await Action.log(db, message.from_user.id, "shift_start", details={"location": last_location, "shift_id": shift_id})
         logger.debug(f"[SHIFT] 📝 Действие 'shift_start' залогировано, shift_id={shift_id}")
+        
+        # Записываем начало смены в историю
+        await ShiftHistory.log(
+            db,
+            chat_id,
+            "shift_started",
+            shift_id=shift_id,
+            shift_started_at=last_location["updated_at"]
+        )
+        logger.debug(f"[SHIFT] 📝 История смены 'shift_started' записана, shift_id={shift_id}")
 
         # Обновляем данные курьера после всех изменений
         courier = await db.couriers.find_one({"_id": courier["_id"]})
@@ -251,14 +261,24 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
 
     # Подсчет заказов за смену
     orders_count = 0
+    complete_orders_count = 0
+    current_shift_id = courier.get("current_shift_id")
+    
     if shift_started_at:
         try:
             logger.debug(f"[SHIFT] 📊 Подсчет заказов за смену с {shift_started_at}")
+            # Общее количество заказов за смену
             orders_count = await db.couriers_deliveries.count_documents({
                 "courier_tg_chat_id": chat_id,
                 "created_at": {"$gte": shift_started_at}
             })
-            logger.info(f"[SHIFT] 📊 Заказов за смену: {orders_count}")
+            # Количество завершенных заказов за смену
+            complete_orders_count = await db.couriers_deliveries.count_documents({
+                "courier_tg_chat_id": chat_id,
+                "status": "done",
+                "created_at": {"$gte": shift_started_at}
+            })
+            logger.info(f"[SHIFT] 📊 Заказов за смену: {orders_count}, завершено: {complete_orders_count}")
         except Exception as e:
             logger.warning(f"[SHIFT] ⚠️ Ошибка подсчета заказов за смену: {e}", exc_info=True)
 
@@ -268,9 +288,21 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
     await redis.delete(f"courier:shift:{chat_id}")
     await redis.delete(f"courier:loc:{chat_id}")
 
-    from db.models import Action
+    from db.models import Action, ShiftHistory
     await Action.log(db, user_id, "shift_end")
     logger.info(f"[SHIFT] ✅ Пользователь {user_id} завершил смену")
+    
+    # Записываем завершение смены в историю
+    await ShiftHistory.log(
+        db,
+        chat_id,
+        "shift_ended",
+        shift_id=current_shift_id,
+        total_orders=orders_count,
+        complete_orders=complete_orders_count,
+        shift_started_at=shift_started_at
+    )
+    logger.debug(f"[SHIFT] 📝 История смены 'shift_ended' записана, shift_id={current_shift_id}, заказов: {orders_count}, завершено: {complete_orders_count}")
 
     # Обновляем данные курьера после всех изменений
     courier = await db.couriers.find_one({"_id": courier["_id"]})

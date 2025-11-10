@@ -83,3 +83,47 @@ class Action:
         """Быстрое логирование действия"""
         action = Action.create(user_id, action_type, **kwargs)
         await db.ship_bot_user_action.insert_one(action)
+
+class ShiftHistory:
+    """Модель для истории смен курьеров"""
+    
+    @staticmethod
+    def create(
+        courier_tg_chat_id: int,
+        event: str,
+        shift_id: Optional[str] = None,
+        total_orders: int = 0,
+        complete_orders: int = 0,
+        shift_started_at: Optional[str] = None
+    ) -> dict:
+        """
+        Создает документ истории смены для записи в БД
+        
+        Args:
+            courier_tg_chat_id: Telegram chat ID курьера
+            event: "shift_started" или "shift_ended"
+            shift_id: ID смены (опционально)
+            total_orders: Общее количество заказов за смену
+            complete_orders: Количество завершенных заказов
+            shift_started_at: Время начала смены (ISO формат)
+        """
+        now = datetime.utcnow()
+        timestamp = now.replace(microsecond=0).isoformat() + "Z"
+        time_readable = now.strftime("%d.%m.%Y %H:%M")
+        
+        return {
+            "courier_tg_chat_id": courier_tg_chat_id,
+            "event": event,
+            "shift_id": shift_id,
+            "total_orders": total_orders,
+            "complete_orders": complete_orders,
+            "timestamp": timestamp,
+            "time": time_readable,
+            "shift_started_at": shift_started_at
+        }
+    
+    @staticmethod
+    async def log(db, courier_tg_chat_id: int, event: str, **kwargs):
+        """Быстрое логирование истории смены"""
+        shift_history = ShiftHistory.create(courier_tg_chat_id, event, **kwargs)
+        await db.shift_history.insert_one(shift_history)
