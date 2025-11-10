@@ -5,79 +5,12 @@ from db.redis_client import get_redis
 from keyboards.orders_kb import new_order_kb, in_transit_kb
 from keyboards.main_menu import main_menu
 from utils.notifications import notify_manager
+from utils.order_format import format_order_text
 from config import ORDER_LOCK_TTL, PHOTO_WAIT_TTL
 from db.models import utcnow_iso
 from datetime import datetime, timezone
-import re
 
 router = Router()
-
-def clean_html_notes(notes: str) -> str:
-    """
-    Очищает HTML-теги из notes, оставляя только поддерживаемые Telegram теги.
-    Telegram поддерживает: <b>, <i>, <u>, <s>, <code>, <pre>, <a>, <tg-spoiler>
-    Удаляет все остальные теги, включая <p>, <div>, <span> и т.д.
-    """
-    if not notes:
-        return ""
-    
-    # Удаляем неподдерживаемые HTML-теги, но сохраняем их содержимое
-    # Сначала заменяем <p> и </p> на переносы строк
-    notes = re.sub(r'<p[^>]*>', '\n', notes, flags=re.IGNORECASE)
-    notes = re.sub(r'</p>', '\n', notes, flags=re.IGNORECASE)
-    
-    # Удаляем другие неподдерживаемые теги, но сохраняем содержимое
-    # Разрешаем только поддерживаемые Telegram теги
-    allowed_tags = ['b', 'i', 'u', 's', 'code', 'pre', 'a', 'tg-spoiler']
-    
-    # Удаляем все теги, кроме разрешенных
-    pattern = r'<(?!\/?(?:' + '|'.join(allowed_tags) + r')\b)[^>]+>'
-    notes = re.sub(pattern, '', notes, flags=re.IGNORECASE)
-    
-    # Очищаем множественные переносы строк
-    notes = re.sub(r'\n{3,}', '\n\n', notes)
-    
-    # Убираем пробелы в начале и конце
-    notes = notes.strip()
-    
-    return notes
-
-def format_order_text(order: dict) -> str:
-    """Unified order formatting for all messages"""
-    status_emoji = {"waiting": "⏳", "in_transit": "🚗", "done": "✅", "cancelled": "❌"}
-    status_text = {"waiting": "Ожидает", "in_transit": "В пути", "done": "Выполнен", "cancelled": "Отменен"}
-    priority_emoji = "🔴" if order.get("priority", 0) >= 5 else "🟡" if order.get("priority", 0) >= 3 else "⚪"
-    
-    text = f"{status_emoji.get(order['status'], '⏳')} Статус: {status_text.get(order['status'], 'Ожидает')}\n\n"
-    text += f"<code>{order.get('address', '—')}</code>\n\n"
-    
-    if order.get("map_url"):
-        text += f"🗺 <a href='{order['map_url']}'>Карта</a>\n\n"
-    
-    text += f"💳 {order.get('payment_status', 'NOT_PAID')} | {priority_emoji} Приоритет: {order.get('priority', 0)}\n"
-    
-    if order.get("delivery_time"):
-        text += f"⏰ {order['delivery_time']}\n"
-    
-    client = order.get('client', {})
-    text += f"👤 {client.get('name', '—')} | 📞 {client.get('phone', '—')}\n"
-    
-    if client.get('tg'):
-        text += f"@{client['tg'].lstrip('@')}\n"
-    
-    if order.get("notes"):
-        cleaned_notes = clean_html_notes(order['notes'])
-        if cleaned_notes:
-            text += f"\n📝 {cleaned_notes}\n"
-    
-    if order.get("brand") or order.get("source"):
-        text += "\n"
-        if order.get("brand"):
-            text += f"🏷 {order['brand']}"
-        if order.get("source"):
-            text += f" | 📊 {order['source']}"
-    
-    return text
 
 @router.message(F.text == "/orders")
 async def cmd_orders(message: Message):
