@@ -308,8 +308,9 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
     
     # Отправка сообщения курьеру
     if message_or_call:
-        if hasattr(message_or_call, 'edit_text'):  # CallbackQuery
-            await message_or_call.edit_text(
+        # Проверяем, является ли это CallbackQuery (имеет атрибут message)
+        if hasattr(message_or_call, 'message') and hasattr(message_or_call, 'answer'):  # CallbackQuery
+            await message_or_call.message.edit_text(
                 shift_message,
                 reply_markup=main_menu(is_on_shift=False)
             )
