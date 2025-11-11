@@ -147,6 +147,10 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
     
     logger.debug(f"[Odoo API] Calling: model={model}, method={method_name}")
     
+    # Логируем данные запроса для отладки (только для create и write операций)
+    if method_name in ["create", "write"]:
+        logger.debug(f"[Odoo API] Request data: {json.dumps(payload, indent=2, ensure_ascii=False, default=str)}")
+    
     try:
         async with aiohttp.ClientSession() as session:
             # API ключ также передается через Basic Auth для дополнительной безопасности
@@ -164,14 +168,20 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
                         result = json.loads(response_text)
                     except Exception as e:
                         logger.error(f"[Odoo API] Failed to parse JSON response: {e}")
+                        logger.error(f"[Odoo API] Response text: {response_text[:500]}")
                         return None
                     
                     if "error" in result:
                         error_data = result.get("error", {})
                         error_message = error_data.get("message", "Unknown error")
                         error_code = error_data.get("code", 0)
+                        error_data_full = error_data.get("data", {})
                         
                         logger.error(f"[Odoo API] Error: code={error_code}, message={error_message}")
+                        # Логируем полную информацию об ошибке
+                        if error_data_full:
+                            logger.error(f"[Odoo API] Error data: {json.dumps(error_data_full, indent=2, ensure_ascii=False, default=str)}")
+                        logger.error(f"[Odoo API] Full error response: {json.dumps(result, indent=2, ensure_ascii=False, default=str)}")
                         
                         # Если ошибка связана с аутентификацией, очищаем кэш
                         if error_code == 200 or "Access Denied" in str(error_message) or "authentication" in str(error_message).lower():

@@ -354,7 +354,12 @@ async def cb_sync_odoo(call: CallbackQuery):
             
             # На случай, если курьер уже существует в Odoo (но не попал в список из-за ошибки),
             # сначала пытаемся удалить, затем создаем заново
-            await delete_courier(tg_id)  # Игнорируем результат - если не существует, ничего страшного
+            deleted = await delete_courier(tg_id)  # Игнорируем результат - если не существует, ничего страшного
+            
+            # Небольшая задержка после удаления, чтобы Odoo успел обработать транзакцию
+            if deleted:
+                import asyncio
+                await asyncio.sleep(0.5)
             
             if await create_courier(
                 name=name,
@@ -364,6 +369,8 @@ async def cb_sync_odoo(call: CallbackQuery):
                 is_online=is_on_shift
             ):
                 added_count += 1
+            else:
+                logger.error(f"[ADMIN] ❌ Не удалось создать курьера {tg_id} ({name}) в Odoo после удаления")
         
         # Находим курьеров, которые есть и в боте, и в Odoo - удаляем и создаем заново если данные отличаются
         to_update = bot_tg_ids & odoo_tg_ids
@@ -392,6 +399,9 @@ async def cb_sync_odoo(call: CallbackQuery):
                 # Удаляем курьера из Odoo
                 if await delete_courier(tg_id):
                     logger.debug(f"[ADMIN] ✅ Курьер {tg_id} удален из Odoo, создаем заново")
+                    # Небольшая задержка после удаления, чтобы Odoo успел обработать транзакцию
+                    import asyncio
+                    await asyncio.sleep(0.5)
                     # Создаем курьера заново с актуальными данными
                     if await create_courier(
                         name=bot_name,
@@ -403,7 +413,7 @@ async def cb_sync_odoo(call: CallbackQuery):
                         updated_count += 1
                         logger.debug(f"[ADMIN] ✅ Курьер {tg_id} успешно обновлен (удален и создан заново)")
                     else:
-                        logger.warning(f"[ADMIN] ⚠️ Не удалось создать курьера {tg_id} после удаления")
+                        logger.error(f"[ADMIN] ❌ Не удалось создать курьера {tg_id} после удаления")
                 else:
                     logger.warning(f"[ADMIN] ⚠️ Не удалось удалить курьера {tg_id} для обновления")
         
