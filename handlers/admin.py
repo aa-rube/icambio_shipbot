@@ -1100,6 +1100,9 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение курьеру {courier_chat_id}: {e}")
     
+    # Показываем попап с подтверждением
+    await call.answer("✅ Заказ выполнен", show_alert=True)
+    
     # Получаем обновленный список заказов курьера
     orders = await db.couriers_deliveries.find({
         "courier_tg_chat_id": courier_chat_id,
@@ -1125,7 +1128,6 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
             "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
             reply_markup=active_orders_kb([], courier_chat_id)
         )
-    await call.answer("Заказ выполнен")
 
 @router.callback_query(F.data.startswith("admin:order_delete:"))
 async def cb_order_delete(call: CallbackQuery, bot: Bot):
@@ -1162,6 +1164,9 @@ async def cb_order_delete(call: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение курьеру {courier_chat_id}: {e}")
     
+    # Показываем попап с подтверждением
+    await call.answer("🗑 Заказ удален", show_alert=True)
+    
     # Получаем обновленный список заказов курьера
     orders = await db.couriers_deliveries.find({
         "courier_tg_chat_id": courier_chat_id,
@@ -1187,7 +1192,6 @@ async def cb_order_delete(call: CallbackQuery, bot: Bot):
             "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
             reply_markup=active_orders_kb([], courier_chat_id)
         )
-    await call.answer("Заказ удален")
 
 @router.callback_query(F.data.startswith("admin:order_assign_courier:"))
 async def cb_order_assign_courier(call: CallbackQuery):
@@ -1294,8 +1298,31 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение новому курьеру {new_courier_chat_id}: {e}")
     
-    await call.message.edit_text(
-        f"✅ Курьер назначен для заказа {external_id}",
-        reply_markup=order_edit_kb(external_id, new_courier_chat_id)
-    )
-    await call.answer("Курьер назначен")
+    # Показываем попап с подтверждением
+    await call.answer("✅ Курьер назначен", show_alert=True)
+    
+    # Получаем обновленный список заказов нового курьера
+    orders = await db.couriers_deliveries.find({
+        "courier_tg_chat_id": new_courier_chat_id,
+        "status": {"$in": ["waiting", "in_transit"]}
+    }).sort("priority", -1).sort("created_at", 1).to_list(100)
+    
+    if orders:
+        # Формируем текст со списком заказов
+        text = "📦 Активные заказы:\n\n"
+        for order in orders:
+            ext_id = order.get("external_id", "N/A")
+            addr = order.get("address", "—")
+            client = order.get("client", {})
+            client_tg = client.get("tg", "")
+            client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
+            text += f"<b>{ext_id}</b> - {addr}\n"
+            if client_username:
+                text += f"   {client_username}\n"
+            text += "\n"
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, new_courier_chat_id))
+    else:
+        await call.message.edit_text(
+            "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
+            reply_markup=active_orders_kb([], new_courier_chat_id)
+        )
