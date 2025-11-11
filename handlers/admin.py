@@ -1043,12 +1043,24 @@ async def cb_order_edit(call: CallbackQuery):
     
     logger.info(f"[ADMIN] ✏️ Админ {call.from_user.id} редактирует заказ {external_id}")
     
-    db = await get_db()
-    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    # Проверяем заказ перед действием (для админов allow_admin=True)
+    from handlers.orders import validate_order_for_action
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        call.from_user.id,
+        allow_admin=True
+    )
     
-    if not order:
-        await call.answer("❌ Заказ не найден", show_alert=True)
+    if not is_valid:
+        logger.warning(f"[ADMIN] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.answer(error_msg or "Действие невозможно", show_alert=True)
         return
+    
+    db = await get_db()
     
     # Если исходный courier_chat_id не передан, используем текущий из заказа
     if original_courier_chat_id is None:
@@ -1078,12 +1090,24 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
     
     logger.info(f"[ADMIN] ✅ Админ {call.from_user.id} завершает заказ {external_id}")
     
-    db = await get_db()
-    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    # Проверяем заказ перед действием (для админов allow_admin=True)
+    from handlers.orders import validate_order_for_action
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        call.from_user.id,
+        allow_admin=True
+    )
     
-    if not order:
-        await call.answer("❌ Заказ не найден", show_alert=True)
+    if not is_valid:
+        logger.warning(f"[ADMIN] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.answer(error_msg or "Действие невозможно", show_alert=True)
         return
+    
+    db = await get_db()
     
     # Если исходный courier_chat_id не передан, используем текущий из заказа
     if original_courier_chat_id is None:
@@ -1161,11 +1185,18 @@ async def cb_order_delete(call: CallbackQuery, bot: Bot):
     
     logger.info(f"[ADMIN] 🗑️ Админ {call.from_user.id} удаляет заказ {external_id}")
     
+    # Проверяем заказ перед действием (для админов allow_admin=True)
+    # Для удаления проверяем что заказ существует (не валидируем статус)
     db = await get_db()
     order = await db.couriers_deliveries.find_one({"external_id": external_id})
     
     if not order:
-        await call.answer("❌ Заказ не найден", show_alert=True)
+        logger.warning(f"[ADMIN] ⚠️ Заказ {external_id} не найден (возможно уже удален)")
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.answer("Заказ не найден или уже удален", show_alert=True)
         return
     
     # Если исходный courier_chat_id не передан, используем текущий из заказа
@@ -1266,12 +1297,24 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
     
     logger.info(f"[ADMIN] 👤 Админ {call.from_user.id} назначает курьера {new_courier_chat_id} для заказа {external_id}")
     
-    db = await get_db()
-    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    # Проверяем заказ перед действием (для админов allow_admin=True)
+    from handlers.orders import validate_order_for_action
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        call.from_user.id,
+        allow_admin=True
+    )
     
-    if not order:
-        await call.answer("❌ Заказ не найден", show_alert=True)
+    if not is_valid:
+        logger.warning(f"[ADMIN] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.answer(error_msg or "Действие невозможно", show_alert=True)
         return
+    
+    db = await get_db()
     
     new_courier = await db.couriers.find_one({"tg_chat_id": new_courier_chat_id})
     if not new_courier:

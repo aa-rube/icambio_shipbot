@@ -10,8 +10,66 @@ from utils.test_orders import is_test_order
 from config import ORDER_LOCK_TTL, PHOTO_WAIT_TTL
 from db.models import utcnow_iso
 from datetime import datetime, timezone
+from typing import Optional, Tuple
 
 router = Router()
+
+async def validate_order_for_action(
+    external_id: str,
+    user_chat_id: int,
+    expected_statuses: Optional[list] = None,
+    allow_admin: bool = False
+) -> Tuple[bool, Optional[dict], Optional[str]]:
+    """
+    Проверяет заказ перед выполнением действия.
+    
+    Args:
+        external_id: ID заказа
+        user_chat_id: Chat ID пользователя, выполняющего действие
+        expected_statuses: Ожидаемые статусы заказа (если None, проверяет что заказ не закрыт)
+        allow_admin: Разрешить админам выполнять действия (проверка курьера игнорируется)
+        
+    Returns:
+        Tuple[bool, Optional[dict], Optional[str]]: 
+        - True если заказ валиден, False если нет
+        - Объект заказа или None
+        - Сообщение об ошибке или None
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    db = await get_db()
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    
+    if not order:
+        logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} не найден (возможно удален)")
+        return False, None, "Заказ не найден или удален"
+    
+    # Проверяем, что заказ не закрыт
+    status = order.get("status")
+    if status in ["done", "cancelled"]:
+        logger.warning(f"[ORDERS] ⚠️ Попытка выполнить действие с закрытым заказом {external_id} (status: {status})")
+        return False, order, "Заказ уже закрыт"
+    
+    # Проверяем ожидаемые статусы (если указаны)
+    if expected_statuses and status not in expected_statuses:
+        logger.warning(f"[ORDERS] ⚠️ Неверный статус заказа {external_id}: ожидался {expected_statuses}, получен {status}")
+        return False, order, "Заказ в неверном статусе"
+    
+    # Проверяем, что заказ принадлежит текущему курьеру (если не админ)
+    if not allow_admin:
+        order_courier_chat_id = order.get("courier_tg_chat_id")
+        # Приводим к одному типу для сравнения
+        if isinstance(order_courier_chat_id, str):
+            order_courier_chat_id = int(order_courier_chat_id)
+        if isinstance(user_chat_id, str):
+            user_chat_id = int(user_chat_id)
+            
+        if order_courier_chat_id != user_chat_id:
+            logger.warning(f"[ORDERS] ⚠️ Попытка выполнить действие с заказом {external_id} другого курьера. Заказ: {order_courier_chat_id}, Пользователь: {user_chat_id}")
+            return False, order, "Заказ назначен другому курьеру"
+    
+    return True, order, None
 
 @router.message(F.text == "/orders")
 async def cmd_orders(message: Message):
@@ -154,14 +212,24 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
     external_id = call.data.split(":", 2)[2]
     logger.info(f"[ORDERS] 🚚 Пользователь {call.from_user.id} принимает заказ {external_id}")
     
+    # Проверяем заказ перед действием
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        call.message.chat.id,
+        expected_statuses=["waiting"]
+    )
+    
+    if not is_valid:
+        logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.answer(error_msg or "Действие невозможно", show_alert=True)
+        return
+    
     db = await get_db()
     redis = get_redis()
-    logger.debug(f"[ORDERS] 🔍 Поиск заказа {external_id}")
-    order = await db.couriers_deliveries.find_one({"external_id": external_id})
-    if not order:
-        logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} не найден")
-        await call.answer("Заказ не найден", show_alert=True)
-        return
 
     # lock to avoid double accept
     lock_key = f"order:lock:{external_id}"
@@ -244,6 +312,22 @@ async def cb_order_accept_payment(call: CallbackQuery):
     external_id = call.data.split(":", 2)[2]
     logger.info(f"[ORDERS] 💰 Пользователь {call.from_user.id} принимает оплату за заказ {external_id}")
     
+    # Проверяем заказ перед действием
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        call.message.chat.id,
+        expected_statuses=["in_transit"]
+    )
+    
+    if not is_valid:
+        logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.answer(error_msg or "Действие невозможно", show_alert=True)
+        return
+    
     redis = get_redis()
     # Устанавливаем флаг ожидания фотографий оплаты в Redis
     # Этот флаг используется в handlers/photo.py для определения, что отправленное фото - это фото оплаты
@@ -267,15 +351,24 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     external_id = call.data.split(":", 2)[2]
     logger.info(f"[ORDERS] ✅ Пользователь {call.from_user.id} завершает заказ {external_id} после оплаты")
     
+    # Проверяем заказ перед действием
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        call.message.chat.id,
+        expected_statuses=["in_transit"]
+    )
+    
+    if not is_valid:
+        logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.answer(error_msg or "Действие невозможно", show_alert=True)
+        return
+    
     db = await get_db()
     redis = get_redis()
-    
-    logger.debug(f"[ORDERS] 🔍 Поиск заказа {external_id}")
-    order = await db.couriers_deliveries.find_one({"external_id": external_id})
-    if not order:
-        logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} не найден")
-        await call.answer("Заказ не найден", show_alert=True)
-        return
     
     # Проверка: если заказ тестовый (отрицательный external_id), автоматически устанавливаем оплату "PAID"
     is_test = is_test_order(external_id)
@@ -340,13 +433,23 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     external_id = call.data.split(":", 2)[2]
     logger.info(f"[ORDERS] 🔍 Пользователь {call.from_user.id} проверяет оплату заказа {external_id}")
     
-    db = await get_db()
-    logger.debug(f"[ORDERS] 🔍 Поиск заказа {external_id}")
-    order = await db.couriers_deliveries.find_one({"external_id": external_id})
-    if not order:
-        logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} не найден")
-        await call.answer("Заказ не найден", show_alert=True)
+    # Проверяем заказ перед действием
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        call.message.chat.id,
+        expected_statuses=["in_transit"]
+    )
+    
+    if not is_valid:
+        logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.answer(error_msg or "Действие невозможно", show_alert=True)
         return
+    
+    db = await get_db()
     
     # Проверка: если заказ тестовый (отрицательный external_id), автоматически устанавливаем оплату "PAID"
     is_test = is_test_order(external_id)
@@ -520,13 +623,23 @@ async def cb_order_done(call: CallbackQuery):
     external_id = call.data.split(":", 2)[2]
     logger.info(f"[ORDERS] ✅ Пользователь {call.from_user.id} завершает заказ {external_id}")
     
-    db = await get_db()
-    logger.debug(f"[ORDERS] 🔍 Поиск заказа {external_id}")
-    order = await db.couriers_deliveries.find_one({"external_id": external_id})
-    if not order:
-        logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} не найден")
-        await call.answer("Заказ не найден", show_alert=True)
+    # Проверяем заказ перед действием
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        call.message.chat.id,
+        expected_statuses=["in_transit"]
+    )
+    
+    if not is_valid:
+        logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.answer(error_msg or "Действие невозможно", show_alert=True)
         return
+    
+    db = await get_db()
     
     # Проверка: тестовые заказы должны пройти проверку оплаты перед завершением
     is_test = is_test_order(external_id)
@@ -558,6 +671,22 @@ async def cb_order_problem(call: CallbackQuery):
     logger = logging.getLogger(__name__)
     external_id = call.data.split(":", 2)[2]
     logger.info(f"[ORDERS] ⚠️ Пользователь {call.from_user.id} сообщил о проблеме с заказом {external_id}")
+    
+    # Проверяем заказ перед действием
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        call.message.chat.id,
+        expected_statuses=["waiting", "in_transit"]
+    )
+    
+    if not is_valid:
+        logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.answer(error_msg or "Действие невозможно", show_alert=True)
+        return
     
     redis = get_redis()
     logger.debug(f"[ORDERS] ⏳ Установка флага ожидания описания проблемы для chat_id {call.message.chat.id}")
