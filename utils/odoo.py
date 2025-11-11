@@ -188,7 +188,7 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
         logger.error(f"[Odoo API] Exception during API call: {e}", exc_info=True)
         return None
 
-async def create_courier(name: str, courier_tg_chat_id: str, phone: Optional[str] = None, is_online: bool = False) -> Optional[int]:
+async def create_courier(name: str, courier_tg_chat_id: str, phone: Optional[str] = None, username: Optional[str] = None, is_online: bool = False) -> Optional[int]:
     """
     Создает курьера в Odoo
     
@@ -196,6 +196,7 @@ async def create_courier(name: str, courier_tg_chat_id: str, phone: Optional[str
         name: Имя курьера
         courier_tg_chat_id: Telegram Chat ID курьера (строка)
         phone: Телефон курьера (опционально)
+        username: Username курьера (опционально)
         is_online: Статус онлайн/оффлайн
         
     Returns:
@@ -209,6 +210,9 @@ async def create_courier(name: str, courier_tg_chat_id: str, phone: Optional[str
     
     if phone:
         courier_data["phone"] = phone
+    
+    if username:
+        courier_data["username"] = username
     
     # В старом формате /jsonrpc аргументы для create должны быть в двойном массиве [[{...}]]
     result = await odoo_call("call", "courier.person", "create", [[courier_data]])
@@ -256,6 +260,59 @@ async def update_courier_status(courier_tg_chat_id: str, is_online: bool) -> boo
         return True
     else:
         logger.warning(f"Failed to update courier {courier_tg_chat_id} status")
+        return False
+
+async def update_courier_info(courier_tg_chat_id: str, name: Optional[str] = None, username: Optional[str] = None, is_online: Optional[bool] = None) -> bool:
+    """
+    Обновляет информацию о курьере в Odoo по courier_tg_chat_id
+    
+    Args:
+        courier_tg_chat_id: Telegram Chat ID курьера (строка) - используется как основной идентификатор
+        name: Имя курьера (опционально)
+        username: Username курьера (опционально)
+        is_online: Статус онлайн/оффлайн (опционально)
+        
+    Returns:
+        True если успешно обновлено, False в противном случае
+    """
+    # Сначала находим курьера по courier_tg_chat_id через search
+    search_result = await odoo_call(
+        "call",
+        "courier.person",
+        "search",
+        [
+            [["courier_tg_chat_id", "=", str(courier_tg_chat_id)]]
+        ]
+    )
+    
+    if not search_result or len(search_result) == 0:
+        logger.warning(f"Courier with TG ID {courier_tg_chat_id} not found in Odoo")
+        return False
+    
+    # Получаем внутренний ID Odoo из результата search
+    odoo_internal_id = search_result[0]
+    
+    # Формируем словарь с данными для обновления
+    update_data = {}
+    if name is not None:
+        update_data["name"] = name
+    if username is not None:
+        update_data["username"] = username
+    if is_online is not None:
+        update_data["is_online"] = is_online
+    
+    if not update_data:
+        logger.debug(f"No data to update for courier {courier_tg_chat_id}")
+        return True
+    
+    # Обновляем данные используя внутренний ID
+    result = await odoo_call("call", "courier.person", "write", [[odoo_internal_id], update_data])
+    
+    if result:
+        logger.debug(f"Courier {courier_tg_chat_id} info updated: {update_data}")
+        return True
+    else:
+        logger.warning(f"Failed to update courier {courier_tg_chat_id} info")
         return False
 
 async def find_courier_by_tg_chat_id(courier_tg_chat_id: str) -> Optional[Dict[str, Any]]:
@@ -327,7 +384,7 @@ async def get_all_couriers_from_odoo() -> List[Dict[str, Any]]:
     Получает всех курьеров из Odoo
     
     Returns:
-        Список курьеров из Odoo с полями: id, name, phone, courier_tg_chat_id, is_online
+        Список курьеров из Odoo с полями: id, name, phone, courier_tg_chat_id, username, is_online
     """
     result = await odoo_call(
         "call",
@@ -335,7 +392,7 @@ async def get_all_couriers_from_odoo() -> List[Dict[str, Any]]:
         "search_read",
         [
             [],  # Пустой фильтр - получаем всех курьеров
-            ["id", "name", "phone", "courier_tg_chat_id", "is_online"]
+            ["id", "name", "phone", "courier_tg_chat_id", "username", "is_online"]
         ]
     )
     

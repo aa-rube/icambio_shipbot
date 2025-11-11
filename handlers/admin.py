@@ -155,6 +155,7 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
             name=full_name,
             courier_tg_chat_id=str(user_id),
             phone=None,  # Телефон можно добавить позже
+            username=username,
             is_online=False
         )
         if odoo_result:
@@ -305,7 +306,7 @@ async def cb_sync_odoo(call: CallbackQuery):
     
     try:
         # Получаем всех курьеров из Odoo
-        from utils.odoo import get_all_couriers_from_odoo, create_courier, delete_courier
+        from utils.odoo import get_all_couriers_from_odoo, create_courier, delete_courier, update_courier_info
         logger.debug(f"[ADMIN] 🔍 Получение всех курьеров из Odoo...")
         odoo_couriers = await get_all_couriers_from_odoo()
         
@@ -313,18 +314,21 @@ async def cb_sync_odoo(call: CallbackQuery):
         logger.debug(f"[ADMIN] 🔍 Получение всех курьеров из бота...")
         bot_couriers = await db.couriers.find({}).to_list(length=None)
         
-        # Создаем множества courier_tg_chat_id для сравнения
-        odoo_tg_ids = set()
+        # Создаем словари для быстрого поиска по courier_tg_chat_id
+        odoo_couriers_dict = {}
         for courier in odoo_couriers:
             tg_id = courier.get("courier_tg_chat_id")
             if tg_id:
-                odoo_tg_ids.add(str(tg_id))
+                odoo_couriers_dict[str(tg_id)] = courier
         
-        bot_tg_ids = set()
+        bot_couriers_dict = {}
         for courier in bot_couriers:
             tg_id = courier.get("tg_chat_id")
             if tg_id:
-                bot_tg_ids.add(str(tg_id))
+                bot_couriers_dict[str(tg_id)] = courier
+        
+        odoo_tg_ids = set(odoo_couriers_dict.keys())
+        bot_tg_ids = set(bot_couriers_dict.keys())
         
         logger.info(f"[ADMIN] 📊 Статистика: Odoo={len(odoo_tg_ids)}, Бот={len(bot_tg_ids)}")
         
@@ -341,18 +345,62 @@ async def cb_sync_odoo(call: CallbackQuery):
         added_count = 0
         for tg_id in to_add_to_odoo:
             # Находим курьера в боте
-            courier = next((c for c in bot_couriers if str(c.get("tg_chat_id")) == tg_id), None)
-            if courier:
-                name = courier.get("name", f"courier_{tg_id}")
-                is_on_shift = courier.get("is_on_shift", False)
-                logger.debug(f"[ADMIN] ➕ Добавление курьера {tg_id} ({name}) в Odoo")
-                if await create_courier(
-                    name=name,
+            courier = bot_couriers_dict[tg_id]
+            name = courier.get("name", f"courier_{tg_id}")
+            username = courier.get("username")
+            is_on_shift = courier.get("is_on_shift", False)
+            logger.debug(f"[ADMIN] ➕ Добавление курьера {tg_id} ({name}) в Odoo")
+            if await create_courier(
+                name=name,
+                courier_tg_chat_id=tg_id,
+                phone=None,
+                username=username,
+                is_online=is_on_shift
+            ):
+                added_count += 1
+        
+        # Находим курьеров, которые есть и в боте, и в Odoo - обновляем данные если отличаются
+        to_update = bot_tg_ids & odoo_tg_ids
+        updated_count = 0
+        for tg_id in to_update:
+            bot_courier = bot_couriers_dict[tg_id]
+            odoo_courier = odoo_couriers_dict[tg_id]
+            
+            bot_name = bot_courier.get("name", "")
+            bot_username = bot_courier.get("username")
+            bot_is_on_shift = bot_courier.get("is_on_shift", False)
+            
+            odoo_name = odoo_courier.get("name", "")
+            odoo_username = odoo_courier.get("username")
+            odoo_is_online = odoo_courier.get("is_online", False)
+            
+            # Проверяем, нужно ли обновление
+            needs_update = False
+            update_data = {}
+            
+            if bot_name != odoo_name:
+                needs_update = True
+                update_data["name"] = bot_name
+                logger.debug(f"[ADMIN] 🔄 Обновление name для {tg_id}: '{odoo_name}' -> '{bot_name}'")
+            
+            if bot_username != odoo_username:
+                needs_update = True
+                update_data["username"] = bot_username
+                logger.debug(f"[ADMIN] 🔄 Обновление username для {tg_id}: '{odoo_username}' -> '{bot_username}'")
+            
+            if bot_is_on_shift != odoo_is_online:
+                needs_update = True
+                update_data["is_online"] = bot_is_on_shift
+                logger.debug(f"[ADMIN] 🔄 Обновление is_online для {tg_id}: {odoo_is_online} -> {bot_is_on_shift}")
+            
+            if needs_update:
+                if await update_courier_info(
                     courier_tg_chat_id=tg_id,
-                    phone=None,
-                    is_online=is_on_shift
+                    name=update_data.get("name"),
+                    username=update_data.get("username"),
+                    is_online=update_data.get("is_online")
                 ):
-                    added_count += 1
+                    updated_count += 1
         
         # Формируем сообщение с результатами
         result_text = (
@@ -363,12 +411,13 @@ async def cb_sync_odoo(call: CallbackQuery):
             f"🔄 Изменения:\n"
             f"• Удалено из Odoo: {deleted_count}\n"
             f"• Добавлено в Odoo: {added_count}\n"
+            f"• Обновлено в Odoo: {updated_count}\n"
         )
         
-        if deleted_count == 0 and added_count == 0:
+        if deleted_count == 0 and added_count == 0 and updated_count == 0:
             result_text += "\n✨ Все курьеры синхронизированы!"
         
-        logger.info(f"[ADMIN] ✅ Синхронизация завершена: удалено={deleted_count}, добавлено={added_count}")
+        logger.info(f"[ADMIN] ✅ Синхронизация завершена: удалено={deleted_count}, добавлено={added_count}, обновлено={updated_count}")
         await call.message.edit_text(result_text, reply_markup=admin_main_kb())
         
     except Exception as e:
