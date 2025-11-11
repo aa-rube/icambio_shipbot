@@ -8,7 +8,7 @@
     "assigned_to": {
       "$oid": "690eab0d71e7152989af327e"
     },
-    "status": "done",
+    "status": "waiting",
     "payment_status": "PAID",
     "is_cash_payment": false,
     "delivery_time": "10:00",
@@ -106,7 +106,7 @@
     "assigned_to": {
       "$oid": "69127ed8b0d52f9659773141"
     },
-    "status": "done",
+    "status": "waiting",
     "payment_status": "PAID",
     "is_cash_payment": false,
     "delivery_time": "09:30",
@@ -204,7 +204,7 @@
     "assigned_to": {
       "$oid": "69127ef2b0d52f9659773143"
     },
-    "status": "done",
+    "status": "waiting",
     "payment_status": "PAID",
     "is_cash_payment": false,
     "delivery_time": "11:00",
@@ -302,7 +302,7 @@
     "assigned_to": {
       "$oid": "69127efeb0d52f9659773145"
     },
-    "status": "done",
+    "status": "waiting",
     "payment_status": "PAID",
     "is_cash_payment": false,
     "delivery_time": "10:30",
@@ -400,7 +400,7 @@
     "assigned_to": {
       "$oid": "69127f0ab0d52f9659773147"
     },
-    "status": "done",
+    "status": "waiting",
     "payment_status": "PAID",
     "is_cash_payment": false,
     "delivery_time": "09:00",

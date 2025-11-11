@@ -304,8 +304,8 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     else:
         logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - уведомление менеджеру не отправляется")
     
-    # Показываем список активных заказов со статусом waiting
-    await show_waiting_orders(call.message.chat.id, call.message)
+    # Показываем список активных заказов (waiting и in_transit)
+    await show_active_orders(call.message.chat.id, call.message)
 
 @router.callback_query(F.data.startswith("order:check_payment:"))
 async def cb_order_check_payment(call: CallbackQuery, bot: Bot):

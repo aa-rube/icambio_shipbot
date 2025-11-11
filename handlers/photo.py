@@ -100,6 +100,6 @@ async def handle_photo(message: Message, bot: Bot):
     else:
         logger.info(f"[PHOTO] 🧪 Тестовый заказ {external_id} - уведомление менеджеру не отправляется")
     
-    # Показываем список активных заказов со статусом waiting
-    from handlers.orders import show_waiting_orders
-    await show_waiting_orders(chat_id, message)
+    # Показываем список активных заказов (waiting и in_transit)
+    from handlers.orders import show_active_orders
+    await show_active_orders(chat_id, message)
