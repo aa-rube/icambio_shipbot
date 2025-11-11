@@ -39,6 +39,15 @@ async def send_webhook(event_type: str, data: Dict[str, Any]) -> bool:
     Returns:
         True если успешно отправлено, False в противном случае
     """
+    # Проверка: для заказов с отрицательным external_id (тестовые заказы) не отправляем webhook
+    if event_type in ("order_accepted", "order_completed"):
+        external_id = data.get("external_id") or (data.get("data", {}).get("external_id") if isinstance(data.get("data"), dict) else None)
+        if external_id:
+            from utils.test_orders import is_test_order
+            if is_test_order(external_id):
+                logger.info(f"[WEBHOOK] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
+                return False
+    
     if not WEBHOOK_URL:
         logger.debug(f"WEBHOOK_URL not configured, skipping webhook for {event_type}")
         return False

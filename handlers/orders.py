@@ -6,6 +6,7 @@ from keyboards.orders_kb import new_order_kb, in_transit_kb
 from keyboards.main_menu import main_menu
 from utils.notifications import notify_manager
 from utils.order_format import format_order_text
+from utils.test_orders import is_test_order
 from config import ORDER_LOCK_TTL, PHOTO_WAIT_TTL
 from db.models import utcnow_iso
 from datetime import datetime, timezone
@@ -172,21 +173,35 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
         return
 
     logger.debug(f"[ORDERS] 💾 Обновление статуса заказа {external_id} на 'in_transit'")
-    await db.couriers_deliveries.update_one({"_id": order["_id"]}, {"$set": {"status": "in_transit", "updated_at": utcnow_iso()}})
+    
+    # Проверка: если заказ тестовый (отрицательный external_id), автоматически устанавливаем оплату "PAID"
+    is_test = is_test_order(external_id)
+    if is_test:
+        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - автоматически устанавливаем оплату PAID")
+        await db.couriers_deliveries.update_one(
+            {"_id": order["_id"]}, 
+            {"$set": {"status": "in_transit", "payment_status": "PAID", "updated_at": utcnow_iso()}}
+        )
+    else:
+        await db.couriers_deliveries.update_one({"_id": order["_id"]}, {"$set": {"status": "in_transit", "updated_at": utcnow_iso()}})
+    
     order = await db.couriers_deliveries.find_one({"_id": order["_id"]})
     
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_accepted", order_id=external_id)
     logger.info(f"[ORDERS] ✅ Пользователь {call.from_user.id} принял заказ {external_id}")
     
-    # Отправка webhook
-    from utils.webhooks import send_webhook, prepare_order_data
-    order_data = await prepare_order_data(db, order)
-    webhook_data = {
-        **order_data,
-        "timestamp": utcnow_iso()
-    }
-    await send_webhook("order_accepted", webhook_data)
+    # Отправка webhook только для реальных заказов (не тестовых)
+    if not is_test:
+        from utils.webhooks import send_webhook, prepare_order_data
+        order_data = await prepare_order_data(db, order)
+        webhook_data = {
+            **order_data,
+            "timestamp": utcnow_iso()
+        }
+        await send_webhook("order_accepted", webhook_data)
+    else:
+        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
     
     await call.message.edit_text(format_order_text(order), parse_mode="HTML", reply_markup=in_transit_kb(external_id, order))
     await call.answer("Статус: в пути")
@@ -237,6 +252,11 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
         await call.answer("Заказ не найден", show_alert=True)
         return
     
+    # Проверка: если заказ тестовый (отрицательный external_id), автоматически устанавливаем оплату "PAID"
+    is_test = is_test_order(external_id)
+    if is_test:
+        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - автоматически устанавливаем оплату PAID")
+    
     # Обновляем статус оплаты и статус заказа
     logger.debug(f"[ORDERS] 💾 Обновление статуса заказа {external_id} на 'done' с оплатой 'PAID'")
     await db.couriers_deliveries.update_one(
@@ -261,22 +281,28 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     await Action.log(db, call.from_user.id, "order_completed", order_id=external_id, details={"after_payment": True})
     logger.info(f"[ORDERS] ✅ Пользователь {call.from_user.id} завершил заказ {external_id} после оплаты")
     
-    # Отправка webhook
-    from utils.webhooks import send_webhook, prepare_order_data
-    order_data = await prepare_order_data(db, order)
-    webhook_data = {
-        **order_data,
-        "timestamp": utcnow_iso()
-    }
-    await send_webhook("order_completed", webhook_data)
+    # Отправка webhook только для реальных заказов (не тестовых)
+    if not is_test:
+        from utils.webhooks import send_webhook, prepare_order_data
+        order_data = await prepare_order_data(db, order)
+        webhook_data = {
+            **order_data,
+            "timestamp": utcnow_iso()
+        }
+        await send_webhook("order_completed", webhook_data)
+    else:
+        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
     
     await call.message.answer("✅ Заказ выполнен. Оплата принята.")
     await call.answer()
     
-    # notify manager
-    courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
-    if courier:
-        await notify_manager(bot, courier, f"📦 Курьер {courier['name']} завершил заказ {external_id} (оплата наличными)")
+    # Уведомление менеджера только для реальных заказов (не тестовых)
+    if not is_test:
+        courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
+        if courier:
+            await notify_manager(bot, courier, f"📦 Курьер {courier['name']} завершил заказ {external_id} (оплата наличными)")
+    else:
+        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - уведомление менеджеру не отправляется")
     
     # Показываем список активных заказов со статусом waiting
     await show_waiting_orders(call.message.chat.id, call.message)
@@ -295,6 +321,28 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     if not order:
         logger.warning(f"[ORDERS] ⚠️ Заказ {external_id} не найден")
         await call.answer("Заказ не найден", show_alert=True)
+        return
+    
+    # Проверка: если заказ тестовый (отрицательный external_id), автоматически устанавливаем оплату "PAID"
+    is_test = is_test_order(external_id)
+    if is_test:
+        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - автоматически устанавливаем оплату PAID, пропускаем проверку в Odoo")
+        # Для тестовых заказов автоматически устанавливаем оплату "PAID" без обращения к Odoo
+        await db.couriers_deliveries.update_one(
+            {"external_id": external_id},
+            {
+                "$set": {
+                    "payment_status": "PAID",
+                    "updated_at": utcnow_iso()
+                }
+            }
+        )
+        order = await db.couriers_deliveries.find_one({"external_id": external_id})
+        text = format_order_text(order)
+        from keyboards.orders_kb import in_transit_kb
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=in_transit_kb(external_id, order))
+        await call.message.answer("✅ Оплата подтверждена (тестовый заказ)")
+        await call.answer()
         return
     
     # Показываем, что идет проверка
@@ -346,8 +394,9 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     # При проверке статуса НЕ обновляем статус в Odoo - только читаем
     # Обновление статуса происходит только когда курьер принимает оплату наличными
     
-    # Если оплата не оплачена, отправляем сообщение в чаттер лида
-    if odoo_payment_status == 'not_paid':
+    # Если оплата не оплачена, отправляем сообщение в чаттер лида (только для реальных заказов)
+    # Проверка: для тестовых заказов не отправляем сообщения в Odoo
+    if odoo_payment_status == 'not_paid' and not is_test_order(external_id):
         # Получаем информацию о курьере из базы данных
         courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
         if courier:
@@ -368,6 +417,8 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
                 logger.warning(f"[ORDERS] ⚠️ Не удалось отправить сообщение в чаттер лида {lead_id}")
         else:
             logger.warning(f"[ORDERS] ⚠️ Курьер не найден в базе данных для chat_id {call.message.chat.id}")
+    elif odoo_payment_status == 'not_paid' and is_test_order(external_id):
+        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - сообщение в чаттер Odoo не отправляется")
     else:
         logger.debug(f"[ORDERS] 💰 Оплата есть (status: {odoo_payment_status}), сообщение в чаттер не отправляется")
     
@@ -424,8 +475,19 @@ async def cb_order_done(call: CallbackQuery):
         await call.answer("Заказ не найден", show_alert=True)
         return
     
-    # Если статус оплаты "не оплачен", не позволяем завершить заказ
-    if order.get("payment_status") == "NOT_PAID":
+    # Проверка: если заказ тестовый (отрицательный external_id), автоматически устанавливаем оплату "PAID"
+    is_test = is_test_order(external_id)
+    if is_test:
+        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - автоматически устанавливаем оплату PAID")
+        # Для тестовых заказов автоматически устанавливаем оплату "PAID"
+        await db.couriers_deliveries.update_one(
+            {"external_id": external_id},
+            {"$set": {"payment_status": "PAID", "updated_at": utcnow_iso()}}
+        )
+        order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    
+    # Если статус оплаты "не оплачен", не позволяем завершить заказ (только для реальных заказов)
+    if not is_test and order.get("payment_status") == "NOT_PAID":
         logger.warning(f"[ORDERS] ⚠️ Попытка завершить заказ {external_id} без оплаты")
         await call.answer("Сначала проверьте оплату", show_alert=True)
         return

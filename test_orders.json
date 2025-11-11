@@ -1,0 +1,493 @@
+[
+  {
+    "_id": {
+      "$oid": "691300010000000000000001"
+    },
+    "external_id": "-301",
+    "courier_tg_chat_id": 7960182194,
+    "assigned_to": {
+      "$oid": "690eab0d71e7152989af327e"
+    },
+    "status": "done",
+    "payment_status": "PAID",
+    "is_cash_payment": false,
+    "delivery_time": "10:00",
+    "priority": 2,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T08:30:00Z",
+    "updated_at": "2025-01-15T10:45:00Z",
+    "client": {
+      "name": "#-301, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491123456789",
+      "chat_id": 1234567890,
+      "tg": "@client_ba_1",
+      "contact_url": "tg://user?id=1234567890"
+    },
+    "address": "Av. Corrientes 1234, C1043 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/abc123def456",
+    "notes": "Доставка в офис. Звонить за 10 минут до прибытия.",
+    "photos": [
+      {
+        "file_id": "AgACAgEAAxkBAAIB1GkQ7JXkWxTL6l8eZryMP30f69OsAAJXC2sb8CiAREBWQ9cMam0IAQADAgADeQADNgQ",
+        "uploaded_at": "2025-01-15T10:45:00Z"
+      }
+    ],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300020000000000000002"
+    },
+    "external_id": "-302",
+    "courier_tg_chat_id": 7960182194,
+    "assigned_to": {
+      "$oid": "690eab0d71e7152989af327e"
+    },
+    "status": "waiting",
+    "payment_status": "NOT_PAID",
+    "is_cash_payment": true,
+    "delivery_time": "14:00",
+    "priority": 1,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T12:00:00Z",
+    "updated_at": "2025-01-15T12:00:00Z",
+    "client": {
+      "name": "#-302, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491198765432",
+      "chat_id": 9876543210,
+      "tg": "@client_ba_2",
+      "contact_url": "tg://user?id=9876543210"
+    },
+    "address": "Av. Santa Fe 2345, C1425 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/def456ghi789",
+    "notes": "Оплата наличными. Клиент будет ждать у входа.",
+    "photos": [],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300030000000000000003"
+    },
+    "external_id": "-303",
+    "courier_tg_chat_id": 7960182194,
+    "assigned_to": {
+      "$oid": "690eab0d71e7152989af327e"
+    },
+    "status": "waiting",
+    "payment_status": "NOT_PAID",
+    "is_cash_payment": false,
+    "delivery_time": "16:00",
+    "priority": 3,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T13:30:00Z",
+    "updated_at": "2025-01-15T13:30:00Z",
+    "client": {
+      "name": "#-303, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491155551234",
+      "chat_id": 5555123456,
+      "tg": "@client_ba_3",
+      "contact_url": "tg://user?id=5555123456"
+    },
+    "address": "Av. 9 de Julio 3456, C1043 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/ghi789jkl012",
+    "notes": "Оплата картой. Проверить оплату перед доставкой.",
+    "photos": [],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300040000000000000004"
+    },
+    "external_id": "-304",
+    "courier_tg_chat_id": 6220502381,
+    "assigned_to": {
+      "$oid": "69127ed8b0d52f9659773141"
+    },
+    "status": "done",
+    "payment_status": "PAID",
+    "is_cash_payment": false,
+    "delivery_time": "09:30",
+    "priority": 2,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T07:15:00Z",
+    "updated_at": "2025-01-15T09:50:00Z",
+    "client": {
+      "name": "#-304, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491166667890",
+      "chat_id": 6666789012,
+      "tg": "@client_ba_4",
+      "contact_url": "tg://user?id=6666789012"
+    },
+    "address": "Av. Libertador 4567, C1425 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/jkl012mno345",
+    "notes": "Доставка в квартиру. Код домофона: 1234",
+    "photos": [
+      {
+        "file_id": "AgACAgEAAxkBAAIB2GkQ7JXkWxTL6l8eZryMP30f69OsAAJXC2sb8CiAREBWQ9cMam0IAQADAgADeQADNgQ",
+        "uploaded_at": "2025-01-15T09:50:00Z"
+      }
+    ],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300050000000000000005"
+    },
+    "external_id": "-305",
+    "courier_tg_chat_id": 6220502381,
+    "assigned_to": {
+      "$oid": "69127ed8b0d52f9659773141"
+    },
+    "status": "in_transit",
+    "payment_status": "NOT_PAID",
+    "is_cash_payment": true,
+    "delivery_time": "13:00",
+    "priority": 1,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T11:20:00Z",
+    "updated_at": "2025-01-15T12:30:00Z",
+    "client": {
+      "name": "#-305, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491177772345",
+      "chat_id": 7777234567,
+      "tg": "@client_ba_5",
+      "contact_url": "tg://user?id=7777234567"
+    },
+    "address": "Av. Cabildo 5678, C1428 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/mno345pqr678",
+    "notes": "Оплата наличными. Клиент просит позвонить за 15 минут.",
+    "photos": [],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300060000000000000006"
+    },
+    "external_id": "-306",
+    "courier_tg_chat_id": 6220502381,
+    "assigned_to": {
+      "$oid": "69127ed8b0d52f9659773141"
+    },
+    "status": "waiting",
+    "payment_status": "NOT_PAID",
+    "is_cash_payment": false,
+    "delivery_time": "15:30",
+    "priority": 2,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T14:00:00Z",
+    "updated_at": "2025-01-15T14:00:00Z",
+    "client": {
+      "name": "#-306, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491188883456",
+      "chat_id": 8888345678,
+      "tg": "@client_ba_6",
+      "contact_url": "tg://user?id=8888345678"
+    },
+    "address": "Av. Córdoba 6789, C1054 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/pqr678stu901",
+    "notes": "Оплата онлайн. Проверить статус оплаты перед выездом.",
+    "photos": [],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300070000000000000007"
+    },
+    "external_id": "-307",
+    "courier_tg_chat_id": 5563606748,
+    "assigned_to": {
+      "$oid": "69127ef2b0d52f9659773143"
+    },
+    "status": "done",
+    "payment_status": "PAID",
+    "is_cash_payment": false,
+    "delivery_time": "11:00",
+    "priority": 3,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T09:00:00Z",
+    "updated_at": "2025-01-15T11:30:00Z",
+    "client": {
+      "name": "#-307, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491199994567",
+      "chat_id": 9999456789,
+      "tg": "@client_ba_7",
+      "contact_url": "tg://user?id=9999456789"
+    },
+    "address": "Av. Scalabrini Ortiz 7890, C1414 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/stu901vwx234",
+    "notes": "Доставка в магазин. Спросить у продавца.",
+    "photos": [
+      {
+        "file_id": "AgACAgEAAxkBAAIB3GkQ7JXkWxTL6l8eZryMP30f69OsAAJXC2sb8CiAREBWQ9cMam0IAQADAgADeQADNgQ",
+        "uploaded_at": "2025-01-15T11:30:00Z"
+      }
+    ],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300080000000000000008"
+    },
+    "external_id": "-308",
+    "courier_tg_chat_id": 5563606748,
+    "assigned_to": {
+      "$oid": "69127ef2b0d52f9659773143"
+    },
+    "status": "waiting",
+    "payment_status": "NOT_PAID",
+    "is_cash_payment": true,
+    "delivery_time": "12:30",
+    "priority": 1,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T10:45:00Z",
+    "updated_at": "2025-01-15T10:45:00Z",
+    "client": {
+      "name": "#-308, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491100005678",
+      "chat_id": 1000056789,
+      "tg": "@client_ba_8",
+      "contact_url": "tg://user?id=1000056789"
+    },
+    "address": "Av. Juan B. Justo 8901, C1414 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/vwx234yza567",
+    "notes": "Оплата наличными. Клиент будет на месте.",
+    "photos": [],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300090000000000000009"
+    },
+    "external_id": "-309",
+    "courier_tg_chat_id": 5563606748,
+    "assigned_to": {
+      "$oid": "69127ef2b0d52f9659773143"
+    },
+    "status": "waiting",
+    "payment_status": "NOT_PAID",
+    "is_cash_payment": false,
+    "delivery_time": "17:00",
+    "priority": 2,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T15:00:00Z",
+    "updated_at": "2025-01-15T15:00:00Z",
+    "client": {
+      "name": "#-309, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491111116789",
+      "chat_id": 1111167890,
+      "tg": "@client_ba_9",
+      "contact_url": "tg://user?id=1111167890"
+    },
+    "address": "Av. Las Heras 9012, C1127 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/yza567abc890",
+    "notes": "Оплата картой. Требуется подтверждение оплаты.",
+    "photos": [],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300100000000000000010"
+    },
+    "external_id": "-310",
+    "courier_tg_chat_id": 8089238713,
+    "assigned_to": {
+      "$oid": "69127efeb0d52f9659773145"
+    },
+    "status": "done",
+    "payment_status": "PAID",
+    "is_cash_payment": false,
+    "delivery_time": "10:30",
+    "priority": 2,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T08:00:00Z",
+    "updated_at": "2025-01-15T10:55:00Z",
+    "client": {
+      "name": "#-310, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491122227890",
+      "chat_id": 2222789012,
+      "tg": "@client_ba_10",
+      "contact_url": "tg://user?id=2222789012"
+    },
+    "address": "Av. del Libertador 1234, C1425 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/abc890def123",
+    "notes": "Доставка в офисное здание. Ресепшн на 1 этаже.",
+    "photos": [
+      {
+        "file_id": "AgACAgEAAxkBAAIB4GkQ7JXkWxTL6l8eZryMP30f69OsAAJXC2sb8CiAREBWQ9cMam0IAQADAgADeQADNgQ",
+        "uploaded_at": "2025-01-15T10:55:00Z"
+      }
+    ],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300110000000000000011"
+    },
+    "external_id": "-311",
+    "courier_tg_chat_id": 8089238713,
+    "assigned_to": {
+      "$oid": "69127efeb0d52f9659773145"
+    },
+    "status": "in_transit",
+    "payment_status": "NOT_PAID",
+    "is_cash_payment": true,
+    "delivery_time": "14:30",
+    "priority": 1,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T12:15:00Z",
+    "updated_at": "2025-01-15T13:45:00Z",
+    "client": {
+      "name": "#-311, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491133338901",
+      "chat_id": 3333890123,
+      "tg": "@client_ba_11",
+      "contact_url": "tg://user?id=3333890123"
+    },
+    "address": "Av. Pueyrredón 2345, C1119 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/def123ghi456",
+    "notes": "Оплата наличными. Встреча у подъезда.",
+    "photos": [],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300120000000000000012"
+    },
+    "external_id": "-312",
+    "courier_tg_chat_id": 8089238713,
+    "assigned_to": {
+      "$oid": "69127efeb0d52f9659773145"
+    },
+    "status": "waiting",
+    "payment_status": "NOT_PAID",
+    "is_cash_payment": false,
+    "delivery_time": "16:30",
+    "priority": 3,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T14:30:00Z",
+    "updated_at": "2025-01-15T14:30:00Z",
+    "client": {
+      "name": "#-312, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491144449012",
+      "chat_id": 4444901234,
+      "tg": "@client_ba_12",
+      "contact_url": "tg://user?id=4444901234"
+    },
+    "address": "Av. Callao 3456, C1023 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/ghi456jkl789",
+    "notes": "Оплата онлайн. Не выезжать без подтверждения оплаты.",
+    "photos": [],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300130000000000000013"
+    },
+    "external_id": "-313",
+    "courier_tg_chat_id": 857559531,
+    "assigned_to": {
+      "$oid": "69127f0ab0d52f9659773147"
+    },
+    "status": "done",
+    "payment_status": "PAID",
+    "is_cash_payment": false,
+    "delivery_time": "09:00",
+    "priority": 2,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T07:30:00Z",
+    "updated_at": "2025-01-15T09:20:00Z",
+    "client": {
+      "name": "#-313, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491155550123",
+      "chat_id": 5555012345,
+      "tg": "@client_ba_13",
+      "contact_url": "tg://user?id=5555012345"
+    },
+    "address": "Av. Rivadavia 4567, C1406 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/jkl789mno012",
+    "notes": "Доставка в кафе. Передать официанту.",
+    "photos": [
+      {
+        "file_id": "AgACAgEAAxkBAAIB5GkQ7JXkWxTL6l8eZryMP30f69OsAAJXC2sb8CiAREBWQ9cMam0IAQADAgADeQADNgQ",
+        "uploaded_at": "2025-01-15T09:20:00Z"
+      }
+    ],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300140000000000000014"
+    },
+    "external_id": "-314",
+    "courier_tg_chat_id": 857559531,
+    "assigned_to": {
+      "$oid": "69127f0ab0d52f9659773147"
+    },
+    "status": "waiting",
+    "payment_status": "NOT_PAID",
+    "is_cash_payment": true,
+    "delivery_time": "13:30",
+    "priority": 1,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T11:45:00Z",
+    "updated_at": "2025-01-15T11:45:00Z",
+    "client": {
+      "name": "#-314, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491166661234",
+      "chat_id": 6666123456,
+      "tg": "@client_ba_14",
+      "contact_url": "tg://user?id=6666123456"
+    },
+    "address": "Av. Belgrano 5678, C1092 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/mno012pqr345",
+    "notes": "Оплата наличными. Клиент ждет на улице.",
+    "photos": [],
+    "pay_photo": []
+  },
+  {
+    "_id": {
+      "$oid": "691300150000000000000015"
+    },
+    "external_id": "-315",
+    "courier_tg_chat_id": 857559531,
+    "assigned_to": {
+      "$oid": "69127f0ab0d52f9659773147"
+    },
+    "status": "waiting",
+    "payment_status": "NOT_PAID",
+    "is_cash_payment": false,
+    "delivery_time": "18:00",
+    "priority": 2,
+    "brand": "power_exchange_team",
+    "source": "iCambio Telegram Bot",
+    "created_at": "2025-01-15T16:00:00Z",
+    "updated_at": "2025-01-15T16:00:00Z",
+    "client": {
+      "name": "#-315, ICAMBIO, ДОСТАВКА📦",
+      "phone": "+5491177772345",
+      "chat_id": 7777234567,
+      "tg": "@client_ba_15",
+      "contact_url": "tg://user?id=7777234567"
+    },
+    "address": "Av. San Martín 6789, C1104 CABA, Buenos Aires, Argentina",
+    "map_url": "https://maps.app.goo.gl/pqr345stu678",
+    "notes": "Оплата картой. Обязательно проверить статус оплаты.",
+    "photos": [],
+    "pay_photo": []
+  }
+]
+

@@ -3,6 +3,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from db.redis_client import get_redis
 from db.mongo import get_db
 from utils.notifications import notify_manager
+from utils.test_orders import is_test_order
 from db.models import utcnow_iso
 
 router = Router()
@@ -20,6 +21,11 @@ async def handle_photo(message: Message, bot: Bot):
     # Проверяем, ожидается ли фото оплаты
     external_id = await redis.get(f"courier:payment_photo_wait:{chat_id}")
     if external_id:
+        # Проверка: если заказ тестовый (отрицательный external_id), автоматически устанавливаем оплату "PAID"
+        is_test = is_test_order(external_id)
+        if is_test:
+            logger.info(f"[PHOTO] 🧪 Тестовый заказ {external_id} - автоматически устанавливаем оплату PAID")
+        
         # Обработка фотографии оплаты
         photo = message.photo[-1]  # largest size
         file_id = photo.file_id
@@ -69,21 +75,30 @@ async def handle_photo(message: Message, bot: Bot):
     await Action.log(db, message.from_user.id, "photo_sent", order_id=external_id, details={"file_id": file_id})
     logger.info(f"User {message.from_user.id} completed order {external_id} with photo")
 
-    # Отправка webhook
-    from utils.webhooks import send_webhook, prepare_order_data
-    order_data = await prepare_order_data(db, order)
-    webhook_data = {
-        **order_data,
-        "timestamp": utcnow_iso()
-    }
-    await send_webhook("order_completed", webhook_data)
+    # Проверка: если заказ тестовый (отрицательный external_id), не отправляем webhook и уведомления
+    is_test = is_test_order(external_id)
+    
+    # Отправка webhook только для реальных заказов (не тестовых)
+    if not is_test:
+        from utils.webhooks import send_webhook, prepare_order_data
+        order_data = await prepare_order_data(db, order)
+        webhook_data = {
+            **order_data,
+            "timestamp": utcnow_iso()
+        }
+        await send_webhook("order_completed", webhook_data)
+    else:
+        logger.info(f"[PHOTO] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
 
     await message.answer("✅ Заказ выполнен. Фото сохранено.")
 
-    # notify manager
-    courier = await db.couriers.find_one({"tg_chat_id": chat_id})
-    if courier:
-        await notify_manager(bot, courier, f"📦 Курьер {courier['name']} завершил заказ {external_id}")
+    # Уведомление менеджера только для реальных заказов (не тестовых)
+    if not is_test:
+        courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+        if courier:
+            await notify_manager(bot, courier, f"📦 Курьер {courier['name']} завершил заказ {external_id}")
+    else:
+        logger.info(f"[PHOTO] 🧪 Тестовый заказ {external_id} - уведомление менеджеру не отправляется")
     
     # Показываем список активных заказов со статусом waiting
     from handlers.orders import show_waiting_orders
