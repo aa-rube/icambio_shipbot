@@ -1,6 +1,7 @@
 import uvicorn
 import json
-from fastapi import FastAPI, HTTPException
+from typing import Optional
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from aiogram import Bot
 from db.mongo import get_db
@@ -14,18 +15,69 @@ from config import BOT_TOKEN, API_HOST, API_PORT
 app = FastAPI(title="Courier Local API")
 bot = Bot(BOT_TOKEN)
 
+def get_client_ip(request: Request) -> Optional[str]:
+    """
+    Получает IP адрес клиента из запроса.
+    Проверяет заголовки X-Forwarded-For, X-Real-IP, затем request.client.host.
+    Возвращает None для локальных адресов (127.0.0.1, ::1, localhost).
+    """
+    # Проверяем заголовки прокси
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        # X-Forwarded-For может содержать несколько IP через запятую
+        ip = forwarded_for.split(",")[0].strip()
+        if ip and not _is_local_ip(ip):
+            return ip
+    
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        ip = real_ip.strip()
+        if ip and not _is_local_ip(ip):
+            return ip
+    
+    # Используем IP из request.client
+    if request.client:
+        ip = request.client.host
+        if ip and not _is_local_ip(ip):
+            return ip
+    
+    return None
+
+def _is_local_ip(ip: str) -> bool:
+    """Проверяет, является ли IP локальным адресом"""
+    if not ip:
+        return True
+    ip = ip.strip().lower()
+    local_ips = ["127.0.0.1", "::1", "localhost", "0.0.0.0"]
+    if ip in local_ips:
+        return True
+    # Проверяем IPv4 локальные адреса (127.x.x.x)
+    if ip.startswith("127."):
+        return True
+    # Проверяем IPv6 локальные адреса (::1, ::ffff:127.0.0.1 и т.д.)
+    if ip.startswith("::"):
+        return True
+    return False
+
 @app.on_event("startup")
 async def on_startup():
     # Инициализация уже выполняется в bot.py, здесь только логирование
     setup_logging()
 
 @app.post("/api/orders")
-async def create_order(payload: IncomingOrder):
+async def create_order(payload: IncomingOrder, request: Request):
     import logging
     logger = logging.getLogger(__name__)
     
     logger.info(f"[API] 📥 Входящий запрос на создание заказа: external_id={payload.external_id}, courier_tg_chat_id={payload.courier_tg_chat_id} (type: {type(payload.courier_tg_chat_id).__name__})")
     logger.debug(f"[API] 📋 Данные заказа: payment_status={payload.payment_status}, priority={payload.priority}, address={payload.address[:50]}...")
+    
+    # Получаем IP адрес клиента
+    client_ip = get_client_ip(request)
+    if client_ip:
+        logger.info(f"[API] 🌐 IP адрес клиента: {client_ip}")
+    else:
+        logger.debug(f"[API] 🌐 Локальный запрос, IP не сохраняется")
     
     db = await get_db()
     redis = get_redis()
@@ -74,6 +126,10 @@ async def create_order(payload: IncomingOrder):
         "photos": [],
         "pay_photo": [],
     }
+    
+    # Сохраняем IP адрес клиента, если он не локальный
+    if client_ip:
+        order_doc["client_ip"] = client_ip
     
     logger.debug(f"[API] 📝 Документ заказа подготовлен: courier_tg_chat_id={order_doc['courier_tg_chat_id']} (type: {type(order_doc['courier_tg_chat_id']).__name__})")
     

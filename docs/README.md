@@ -7,3 +7,4 @@ git pull
 sudo systemctl restart icambio-shipbot
 sudo journalctl -u icambio-shipbot -f
 ```
+

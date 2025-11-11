@@ -150,6 +150,11 @@ async def prepare_order_data(db, order: Dict[str, Any]) -> Dict[str, Any]:
         "courier": courier_data
     }
     
+    # Добавляем IP адрес клиента, если он был сохранен
+    client_ip = order.get("client_ip")
+    if client_ip:
+        order_data["client_ip"] = client_ip
+    
     # Убираем None значения для чистоты данных
     order_data = {k: v for k, v in order_data.items() if v is not None}
     
