@@ -212,53 +212,96 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data == "admin:del_user")
 async def cb_del_user(call: CallbackQuery):
-    if not await is_super_admin(call.from_user.id):
-        await call.answer("❌ Доступ запрещен", show_alert=True)
-        return
+    import logging
+    logger = logging.getLogger(__name__)
     
-    db = await get_db()
-    couriers = await db.couriers.find().sort("name", 1).to_list(100)
-    
-    if not couriers:
-        await call.message.edit_text("ℹ️ Нет пользователей", reply_markup=back_to_admin_kb())
+    try:
+        if not await is_super_admin(call.from_user.id):
+            await call.answer("❌ Доступ запрещен", show_alert=True)
+            return
+        
+        db = await get_db()
+        couriers = await db.couriers.find().sort("name", 1).to_list(100)
+        
+        if not couriers:
+            await call.message.edit_text("ℹ️ Нет пользователей", reply_markup=back_to_admin_kb())
+            await call.answer()
+            return
+        
+        try:
+            await call.message.edit_text(
+                "➖ Удаление пользователя\n\nВыбери пользователя для удаления:",
+                reply_markup=user_list_kb(couriers)
+            )
+        except Exception as edit_error:
+            logger.warning(f"[ADMIN] ⚠️ Не удалось отредактировать сообщение, отправляем новое: {edit_error}")
+            await call.message.answer(
+                "➖ Удаление пользователя\n\nВыбери пользователя для удаления:",
+                reply_markup=user_list_kb(couriers)
+            )
         await call.answer()
-        return
-    
-    await call.message.edit_text(
-        "➖ Удаление пользователя\n\nВыбери пользователя для удаления:",
-        reply_markup=user_list_kb(couriers)
-    )
-    await call.answer()
+    except Exception as e:
+        logger.error(f"[ADMIN] ❌ Ошибка в cb_del_user: {e}", exc_info=True)
+        try:
+            await call.answer("❌ Произошла ошибка", show_alert=True)
+        except:
+            pass
 
 @router.callback_query(F.data.startswith("admin:confirm_del:"))
 async def cb_confirm_del(call: CallbackQuery):
-    if not await is_super_admin(call.from_user.id):
-        await call.answer("❌ Доступ запрещен", show_alert=True)
-        return
+    import logging
+    logger = logging.getLogger(__name__)
     
-    chat_id = int(call.data.split(":", 2)[2])
-    db = await get_db()
-    courier = await db.couriers.find_one({"tg_chat_id": chat_id})
-    
-    if not courier:
-        await call.answer("❌ Пользователь не найден", show_alert=True)
-        return
-    
-    await call.message.edit_text(
-        f"⚠️ Подтверди удаление\n\n"
-        f"Пользователь: {courier.get('name', 'Unknown')}\n"
-        f"ID: {chat_id}",
-        reply_markup=confirm_delete_kb(chat_id)
-    )
-    await call.answer()
+    try:
+        if not await is_super_admin(call.from_user.id):
+            await call.answer("❌ Доступ запрещен", show_alert=True)
+            return
+        
+        chat_id = int(call.data.split(":", 2)[2])
+        db = await get_db()
+        courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+        
+        if not courier:
+            await call.answer("❌ Пользователь не найден", show_alert=True)
+            return
+        
+        try:
+            await call.message.edit_text(
+                f"⚠️ Подтверди удаление\n\n"
+                f"Пользователь: {courier.get('name', 'Unknown')}\n"
+                f"ID: {chat_id}",
+                reply_markup=confirm_delete_kb(chat_id)
+            )
+        except Exception as edit_error:
+            logger.warning(f"[ADMIN] ⚠️ Не удалось отредактировать сообщение, отправляем новое: {edit_error}")
+            await call.message.answer(
+                f"⚠️ Подтверди удаление\n\n"
+                f"Пользователь: {courier.get('name', 'Unknown')}\n"
+                f"ID: {chat_id}",
+                reply_markup=confirm_delete_kb(chat_id)
+            )
+        await call.answer()
+    except Exception as e:
+        logger.error(f"[ADMIN] ❌ Ошибка в cb_confirm_del: {e}", exc_info=True)
+        try:
+            await call.answer("❌ Произошла ошибка", show_alert=True)
+        except:
+            pass
 
 @router.callback_query(F.data.startswith("admin:delete:"))
 async def cb_delete_user(call: CallbackQuery):
     import logging
     logger = logging.getLogger(__name__)
+    
+    # Сразу убираем индикатор загрузки
+    await call.answer()
+    
     if not await is_super_admin(call.from_user.id):
         logger.warning(f"[ADMIN] ⚠️ Доступ запрещен для пользователя {call.from_user.id}")
-        await call.answer("❌ Доступ запрещен", show_alert=True)
+        try:
+            await call.message.answer("❌ Доступ запрещен")
+        except:
+            pass
         return
     
     chat_id = int(call.data.split(":", 2)[2])
@@ -293,17 +336,36 @@ async def cb_delete_user(call: CallbackQuery):
     if result.deleted_count > 0:
         logger.info(f"[ADMIN] ✅ Админ {call.from_user.id} удалил пользователя {chat_id} ({courier_name}), Odoo: {'удален' if odoo_deleted else 'не найден/ошибка'}")
         odoo_status = "\n✅ Odoo: удален" if odoo_deleted else "\n⚠️ Odoo: не найден или ошибка"
-        await call.message.edit_text(
-            f"✅ Пользователь {chat_id} удален{odoo_status}",
-            reply_markup=admin_main_kb()
-        )
+        try:
+            await call.message.edit_text(
+                f"✅ Пользователь {chat_id} удален{odoo_status}",
+                reply_markup=admin_main_kb()
+            )
+        except Exception as edit_error:
+            logger.warning(f"[ADMIN] ⚠️ Не удалось отредактировать сообщение, отправляем новое: {edit_error}")
+            try:
+                await call.message.answer(
+                    f"✅ Пользователь {chat_id} удален{odoo_status}",
+                    reply_markup=admin_main_kb()
+                )
+            except:
+                pass
     else:
         logger.warning(f"[ADMIN] ⚠️ Не удалось удалить пользователя {chat_id} админом {call.from_user.id}")
-        await call.message.edit_text(
-            "❌ Не удалось удалить пользователя",
-            reply_markup=admin_main_kb()
-        )
-    await call.answer()
+        try:
+            await call.message.edit_text(
+                "❌ Не удалось удалить пользователя",
+                reply_markup=admin_main_kb()
+            )
+        except Exception as edit_error:
+            logger.warning(f"[ADMIN] ⚠️ Не удалось отредактировать сообщение: {edit_error}")
+            try:
+                await call.message.answer(
+                    "❌ Не удалось удалить пользователя",
+                    reply_markup=admin_main_kb()
+                )
+            except:
+                pass
 
 @router.callback_query(F.data == "admin:sync_odoo")
 async def cb_sync_odoo(call: CallbackQuery):
