@@ -415,3 +415,75 @@ async def send_message_to_lead_chatter(lead_id: int, message_body: str) -> bool:
         logger.error(f"Error sending message to lead {lead_id} chatter: {e}", exc_info=True)
         return False
 
+async def update_order_courier(external_id: str, courier_tg_chat_id: str) -> bool:
+    """
+    Обновляет курьера заказа в Odoo
+    
+    Args:
+        external_id: Внешний ID заказа (ID лида в Odoo)
+        courier_tg_chat_id: Telegram Chat ID нового курьера (строка)
+        
+    Returns:
+        True если успешно обновлено, False в противном случае
+    """
+    try:
+        # Преобразуем external_id в int, если это строка
+        if isinstance(external_id, str):
+            try:
+                lead_id = int(external_id)
+            except ValueError:
+                logger.warning(f"Invalid external_id format (not a number): {external_id}")
+                return False
+        else:
+            lead_id = external_id
+        
+        # Сначала находим курьера по courier_tg_chat_id через search
+        search_result = await odoo_call(
+            "call",
+            "courier.person",
+            "search",
+            [
+                [["courier_tg_chat_id", "=", str(courier_tg_chat_id)]]
+            ]
+        )
+        
+        if not search_result or len(search_result) == 0:
+            logger.warning(f"Courier with TG ID {courier_tg_chat_id} not found in Odoo")
+            return False
+        
+        # Получаем внутренний ID курьера из результата search
+        courier_odoo_id = search_result[0]
+        
+        # Обновляем курьера заказа в лиде
+        # Предполагаем, что в модели crm.lead есть поле courier_id или courier_tg_chat_id
+        # Нужно проверить структуру модели в Odoo
+        # Для начала попробуем обновить через поле courier_id (если оно существует)
+        result = await odoo_call(
+            "call",
+            "crm.lead",
+            "write",
+            [[lead_id], {"courier_id": courier_odoo_id}]  # Предполагаем, что поле называется courier_id
+        )
+        
+        if result:
+            logger.info(f"Order {external_id} courier updated to {courier_tg_chat_id} in Odoo")
+            return True
+        else:
+            # Если не получилось с courier_id, попробуем через courier_tg_chat_id (если такое поле есть)
+            logger.debug(f"Trying to update via courier_tg_chat_id field")
+            result2 = await odoo_call(
+                "call",
+                "crm.lead",
+                "write",
+                [[lead_id], {"courier_tg_chat_id": str(courier_tg_chat_id)}]
+            )
+            if result2:
+                logger.info(f"Order {external_id} courier updated to {courier_tg_chat_id} in Odoo (via courier_tg_chat_id)")
+                return True
+            else:
+                logger.warning(f"Failed to update order {external_id} courier in Odoo")
+                return False
+    except Exception as e:
+        logger.error(f"Error updating order {external_id} courier in Odoo: {e}", exc_info=True)
+        return False
+
