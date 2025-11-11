@@ -126,10 +126,9 @@ def active_orders_kb(orders: list, chat_id: int) -> InlineKeyboardMarkup:
     buttons = []
     for order in orders:
         external_id = order.get("external_id", "N/A")
-        # Кнопка с номером заказа и кнопкой редактирования
+        # Объединенная кнопка с номером заказа и карандашом
         buttons.append([
-            InlineKeyboardButton(text=f"{external_id}", callback_data=f"admin:order_edit:{external_id}"),
-            InlineKeyboardButton(text="✏️", callback_data=f"admin:order_edit:{external_id}")
+            InlineKeyboardButton(text=f"{external_id} ✏️", callback_data=f"admin:order_edit:{external_id}")
         ])
     # Кнопка "Назад" для возврата к курьеру
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_to_courier:{chat_id}")])
