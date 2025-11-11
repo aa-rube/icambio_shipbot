@@ -1,7 +1,7 @@
 import aiohttp
 import logging
 from typing import Dict, Any, Optional
-from config import WEBHOOK_URL
+from config import WEBHOOK_URL, WEBHOOK_PORT
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +28,14 @@ def map_order_status(status: str) -> str:
     """
     return ORDER_STATUS_MAPPING.get(status, status)
 
-async def send_webhook(event_type: str, data: Dict[str, Any]) -> bool:
+async def send_webhook(event_type: str, data: Dict[str, Any], webhook_url: Optional[str] = None) -> bool:
     """
     Отправляет webhook с данными события
     
     Args:
         event_type: Тип события (shift_start, shift_end, order_accepted, order_completed)
         data: Полные данные для отправки
+        webhook_url: URL для отправки webhook (опционально, если не указан - определяется автоматически)
         
     Returns:
         True если успешно отправлено, False в противном случае
@@ -48,8 +49,26 @@ async def send_webhook(event_type: str, data: Dict[str, Any]) -> bool:
                 logger.info(f"[WEBHOOK] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
                 return False
     
-    if not WEBHOOK_URL:
-        logger.debug(f"WEBHOOK_URL not configured, skipping webhook for {event_type}")
+    # Определяем URL для webhook
+    target_url = webhook_url
+    
+    # Для событий заказов используем client_ip из данных, если он есть
+    if not target_url and event_type in ("order_accepted", "order_completed"):
+        client_ip = data.get("client_ip")
+        logger.debug(f"[WEBHOOK] 🔍 Проверка client_ip для события {event_type}: {client_ip}")
+        if client_ip:
+            # Формируем URL из IP адреса клиента
+            target_url = f"http://{client_ip}:{WEBHOOK_PORT}/webhook"
+            logger.info(f"[WEBHOOK] 🌐 Используется IP адрес из заказа: {client_ip} -> {target_url}")
+        else:
+            logger.debug(f"[WEBHOOK] ⚠️ client_ip не найден в данных заказа (external_id: {data.get('external_id')}), используем глобальный WEBHOOK_URL")
+    
+    # Если URL не определен, используем глобальный WEBHOOK_URL
+    if not target_url:
+        target_url = WEBHOOK_URL
+    
+    if not target_url:
+        logger.debug(f"[WEBHOOK] WEBHOOK_URL not configured, skipping webhook for {event_type}")
         return False
     
     payload = {
@@ -59,20 +78,22 @@ async def send_webhook(event_type: str, data: Dict[str, Any]) -> bool:
     }
     
     try:
+        logger.debug(f"[WEBHOOK] 📤 Отправка webhook на {target_url} для события {event_type}")
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                WEBHOOK_URL,
+                target_url,
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as response:
                 if response.status == 200:
-                    logger.info(f"Webhook sent successfully for {event_type}")
+                    logger.info(f"[WEBHOOK] ✅ Webhook успешно отправлен для {event_type} на {target_url}")
                     return True
                 else:
-                    logger.warning(f"Webhook failed with status {response.status} for {event_type}")
+                    response_text = await response.text()
+                    logger.warning(f"[WEBHOOK] ⚠️ Webhook failed with status {response.status} for {event_type} на {target_url}. Response: {response_text[:200]}")
                     return False
     except Exception as e:
-        logger.error(f"Error sending webhook for {event_type}: {e}", exc_info=True)
+        logger.error(f"[WEBHOOK] ❌ Error sending webhook for {event_type} на {target_url}: {e}", exc_info=True)
         return False
 
 async def prepare_courier_data(db, courier: Dict[str, Any]) -> Dict[str, Any]:

@@ -43,3 +43,4 @@ DEV_CHAT_ID = int(os.getenv("DEV_CHAT_ID", "0"))
 
 # Webhook
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))  # Порт для исходящих webhook запросов
