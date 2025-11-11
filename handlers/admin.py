@@ -1035,7 +1035,12 @@ async def cb_order_edit(call: CallbackQuery):
         await call.answer("❌ Доступ запрещен", show_alert=True)
         return
     
-    external_id = call.data.split(":", 2)[2]
+    # Формат: admin:order_edit:external_id или admin:order_edit:external_id:original_courier_chat_id
+    parts = call.data.split(":")
+    external_id = parts[2]
+    # Если есть исходный courier_chat_id, используем его, иначе берем из заказа
+    original_courier_chat_id = int(parts[3]) if len(parts) > 3 else None
+    
     logger.info(f"[ADMIN] ✏️ Админ {call.from_user.id} редактирует заказ {external_id}")
     
     db = await get_db()
@@ -1045,14 +1050,15 @@ async def cb_order_edit(call: CallbackQuery):
         await call.answer("❌ Заказ не найден", show_alert=True)
         return
     
-    # Получаем chat_id курьера для кнопки "Назад"
-    courier_chat_id = order.get("courier_tg_chat_id")
+    # Если исходный courier_chat_id не передан, используем текущий из заказа
+    if original_courier_chat_id is None:
+        original_courier_chat_id = order.get("courier_tg_chat_id")
     
     # Формируем текст заказа
     from utils.order_format import format_order_text
     text = format_order_text(order)
     
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=order_edit_kb(external_id, courier_chat_id))
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=order_edit_kb(external_id, original_courier_chat_id))
     await call.answer()
 
 @router.callback_query(F.data.startswith("admin:order_complete:"))
@@ -1065,7 +1071,11 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
         await call.answer("❌ Доступ запрещен", show_alert=True)
         return
     
-    external_id = call.data.split(":", 2)[2]
+    # Формат: admin:order_complete:external_id:original_courier_chat_id
+    parts = call.data.split(":")
+    external_id = parts[2]
+    original_courier_chat_id = int(parts[3]) if len(parts) > 3 else None
+    
     logger.info(f"[ADMIN] ✅ Админ {call.from_user.id} завершает заказ {external_id}")
     
     db = await get_db()
@@ -1075,7 +1085,12 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
         await call.answer("❌ Заказ не найден", show_alert=True)
         return
     
-    courier_chat_id = order.get("courier_tg_chat_id")
+    # Если исходный courier_chat_id не передан, используем текущий из заказа
+    if original_courier_chat_id is None:
+        original_courier_chat_id = order.get("courier_tg_chat_id")
+    
+    # Для отправки сообщения используем текущего курьера заказа
+    current_courier_chat_id = order.get("courier_tg_chat_id")
     address = order.get("address", "")
     
     # Обновляем заказ: статус done, записываем что закрыл администратор
@@ -1094,18 +1109,18 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
     # Отправляем сообщение курьеру
     try:
         await bot.send_message(
-            courier_chat_id,
+            current_courier_chat_id,
             f"✅ Заказ {external_id} выполнен\nАдрес: {address}"
         )
     except Exception as e:
-        logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение курьеру {courier_chat_id}: {e}")
+        logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение курьеру {current_courier_chat_id}: {e}")
     
     # Показываем попап с подтверждением
     await call.answer("✅ Заказ выполнен", show_alert=True)
     
-    # Получаем обновленный список заказов курьера
+    # Получаем обновленный список заказов исходного курьера (того, с которым работали)
     orders = await db.couriers_deliveries.find({
-        "courier_tg_chat_id": courier_chat_id,
+        "courier_tg_chat_id": original_courier_chat_id,
         "status": {"$in": ["waiting", "in_transit"]}
     }).sort("priority", -1).sort("created_at", 1).to_list(100)
     
@@ -1122,11 +1137,11 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
             if client_username:
                 text += f"   {client_username}\n"
             text += "\n"
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, courier_chat_id))
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, original_courier_chat_id))
     else:
         await call.message.edit_text(
             "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
-            reply_markup=active_orders_kb([], courier_chat_id)
+            reply_markup=active_orders_kb([], original_courier_chat_id)
         )
 
 @router.callback_query(F.data.startswith("admin:order_delete:"))
@@ -1139,7 +1154,11 @@ async def cb_order_delete(call: CallbackQuery, bot: Bot):
         await call.answer("❌ Доступ запрещен", show_alert=True)
         return
     
-    external_id = call.data.split(":", 2)[2]
+    # Формат: admin:order_delete:external_id:original_courier_chat_id
+    parts = call.data.split(":")
+    external_id = parts[2]
+    original_courier_chat_id = int(parts[3]) if len(parts) > 3 else None
+    
     logger.info(f"[ADMIN] 🗑️ Админ {call.from_user.id} удаляет заказ {external_id}")
     
     db = await get_db()
@@ -1149,7 +1168,12 @@ async def cb_order_delete(call: CallbackQuery, bot: Bot):
         await call.answer("❌ Заказ не найден", show_alert=True)
         return
     
-    courier_chat_id = order.get("courier_tg_chat_id")
+    # Если исходный courier_chat_id не передан, используем текущий из заказа
+    if original_courier_chat_id is None:
+        original_courier_chat_id = order.get("courier_tg_chat_id")
+    
+    # Для отправки сообщения используем текущего курьера заказа
+    current_courier_chat_id = order.get("courier_tg_chat_id")
     address = order.get("address", "")
     
     # Удаляем заказ
@@ -1158,18 +1182,18 @@ async def cb_order_delete(call: CallbackQuery, bot: Bot):
     # Отправляем сообщение курьеру
     try:
         await bot.send_message(
-            courier_chat_id,
+            current_courier_chat_id,
             f"🗑 Заказ {external_id} удален\nАдрес: {address}"
         )
     except Exception as e:
-        logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение курьеру {courier_chat_id}: {e}")
+        logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение курьеру {current_courier_chat_id}: {e}")
     
     # Показываем попап с подтверждением
     await call.answer("🗑 Заказ удален", show_alert=True)
     
-    # Получаем обновленный список заказов курьера
+    # Получаем обновленный список заказов исходного курьера (того, с которым работали)
     orders = await db.couriers_deliveries.find({
-        "courier_tg_chat_id": courier_chat_id,
+        "courier_tg_chat_id": original_courier_chat_id,
         "status": {"$in": ["waiting", "in_transit"]}
     }).sort("priority", -1).sort("created_at", 1).to_list(100)
     
@@ -1186,11 +1210,11 @@ async def cb_order_delete(call: CallbackQuery, bot: Bot):
             if client_username:
                 text += f"   {client_username}\n"
             text += "\n"
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, courier_chat_id))
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, original_courier_chat_id))
     else:
         await call.message.edit_text(
             "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
-            reply_markup=active_orders_kb([], courier_chat_id)
+            reply_markup=active_orders_kb([], original_courier_chat_id)
         )
 
 @router.callback_query(F.data.startswith("admin:order_assign_courier:"))
@@ -1203,7 +1227,11 @@ async def cb_order_assign_courier(call: CallbackQuery):
         await call.answer("❌ Доступ запрещен", show_alert=True)
         return
     
-    external_id = call.data.split(":", 2)[2]
+    # Формат: admin:order_assign_courier:external_id:original_courier_chat_id
+    parts = call.data.split(":")
+    external_id = parts[2]
+    original_courier_chat_id = int(parts[3]) if len(parts) > 3 else None
+    
     logger.info(f"[ADMIN] 👤 Админ {call.from_user.id} назначает курьера для заказа {external_id}")
     
     db = await get_db()
@@ -1213,9 +1241,10 @@ async def cb_order_assign_courier(call: CallbackQuery):
         await call.answer("❌ Нет доступных курьеров", show_alert=True)
         return
     
+    # Передаем исходный courier_chat_id в клавиатуру для сохранения контекста
     await call.message.edit_text(
         f"👤 Назначить курьера для заказа {external_id}:\n\nВыберите курьера:",
-        reply_markup=courier_list_kb(couriers, external_id)
+        reply_markup=courier_list_kb(couriers, external_id, original_courier_chat_id)
     )
     await call.answer()
 
@@ -1229,10 +1258,11 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
         await call.answer("❌ Доступ запрещен", show_alert=True)
         return
     
-    # Формат: admin:assign_courier:external_id:courier_chat_id
+    # Формат: admin:assign_courier:external_id:new_courier_chat_id:original_courier_chat_id
     parts = call.data.split(":")
     external_id = parts[2]
     new_courier_chat_id = int(parts[3])
+    original_courier_chat_id = int(parts[4]) if len(parts) > 4 else None
     
     logger.info(f"[ADMIN] 👤 Админ {call.from_user.id} назначает курьера {new_courier_chat_id} для заказа {external_id}")
     
@@ -1249,6 +1279,9 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
         return
     
     old_courier_chat_id = order.get("courier_tg_chat_id")
+    # Если исходный courier_chat_id не передан, используем старый из заказа
+    if original_courier_chat_id is None:
+        original_courier_chat_id = old_courier_chat_id
     address = order.get("address", "")
     
     # Обновляем заказ в БД
@@ -1301,9 +1334,9 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
     # Показываем попап с подтверждением
     await call.answer("✅ Курьер назначен", show_alert=True)
     
-    # Получаем обновленный список заказов нового курьера
+    # Получаем обновленный список заказов исходного курьера (того, с которым работали)
     orders = await db.couriers_deliveries.find({
-        "courier_tg_chat_id": new_courier_chat_id,
+        "courier_tg_chat_id": old_courier_chat_id,
         "status": {"$in": ["waiting", "in_transit"]}
     }).sort("priority", -1).sort("created_at", 1).to_list(100)
     
@@ -1320,9 +1353,9 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
             if client_username:
                 text += f"   {client_username}\n"
             text += "\n"
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, new_courier_chat_id))
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, old_courier_chat_id))
     else:
         await call.message.edit_text(
             "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
-            reply_markup=active_orders_kb([], new_courier_chat_id)
+            reply_markup=active_orders_kb([], old_courier_chat_id)
         )
