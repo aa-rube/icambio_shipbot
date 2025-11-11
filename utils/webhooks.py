@@ -58,7 +58,7 @@ async def send_webhook(event_type: str, data: Dict[str, Any], webhook_url: Optio
         logger.debug(f"[WEBHOOK] 🔍 Проверка client_ip для события {event_type}: {client_ip}")
         if client_ip:
             # Формируем URL из IP адреса клиента
-            target_url = f"http://{client_ip}:{WEBHOOK_PORT}/webhook"
+            target_url = f"http://{client_ip}:{WEBHOOK_PORT}/shipbot-to-odoo"
             logger.info(f"[WEBHOOK] 🌐 Используется IP адрес из заказа: {client_ip} -> {target_url}")
         else:
             logger.debug(f"[WEBHOOK] ⚠️ client_ip не найден в данных заказа (external_id: {data.get('external_id')}), используем глобальный WEBHOOK_URL")
