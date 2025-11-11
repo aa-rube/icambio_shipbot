@@ -174,22 +174,18 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
 
     logger.debug(f"[ORDERS] 💾 Обновление статуса заказа {external_id} на 'in_transit'")
     
-    # Проверка: если заказ тестовый (отрицательный external_id), автоматически устанавливаем оплату "PAID"
-    is_test = is_test_order(external_id)
-    if is_test:
-        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - автоматически устанавливаем оплату PAID")
-        await db.couriers_deliveries.update_one(
-            {"_id": order["_id"]}, 
-            {"$set": {"status": "in_transit", "payment_status": "PAID", "updated_at": utcnow_iso()}}
-        )
-    else:
-        await db.couriers_deliveries.update_one({"_id": order["_id"]}, {"$set": {"status": "in_transit", "updated_at": utcnow_iso()}})
+    # Обновляем статус заказа на "in_transit" без изменения payment_status
+    # Для тестовых заказов оплата будет установлена только при проверке оплаты
+    await db.couriers_deliveries.update_one({"_id": order["_id"]}, {"$set": {"status": "in_transit", "updated_at": utcnow_iso()}})
     
     order = await db.couriers_deliveries.find_one({"_id": order["_id"]})
     
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_accepted", order_id=external_id)
     logger.info(f"[ORDERS] ✅ Пользователь {call.from_user.id} принял заказ {external_id}")
+    
+    # Проверка для webhook (тестовые заказы не отправляют webhook)
+    is_test = is_test_order(external_id)
     
     # Отправка webhook только для реальных заказов (не тестовых)
     if not is_test:
@@ -345,6 +341,18 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
         await call.answer()
         return
     
+    # Проверка: для заказов с наличными (is_cash_payment=True) не проверяем в Odoo
+    # Менеджер не может поставить оплачено для наличных до встречи курьера с клиентом
+    is_cash = order.get("is_cash_payment", False)
+    if is_cash:
+        logger.info(f"[ORDERS] 💵 Заказ {external_id} с оплатой наличными - не проверяем в Odoo")
+        await call.message.answer(
+            "💵 Заказ с оплатой наличными.\n\n"
+            "Для принятия оплаты используйте кнопку \"💰 Принять оплату\" после получения денег от клиента."
+        )
+        await call.answer()
+        return
+    
     # Показываем, что идет проверка
     await call.answer("Проверяю статус оплаты...", show_alert=False)
     
@@ -475,21 +483,17 @@ async def cb_order_done(call: CallbackQuery):
         await call.answer("Заказ не найден", show_alert=True)
         return
     
-    # Проверка: если заказ тестовый (отрицательный external_id), автоматически устанавливаем оплату "PAID"
+    # Проверка: тестовые заказы должны пройти проверку оплаты перед завершением
     is_test = is_test_order(external_id)
-    if is_test:
-        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - автоматически устанавливаем оплату PAID")
-        # Для тестовых заказов автоматически устанавливаем оплату "PAID"
-        await db.couriers_deliveries.update_one(
-            {"external_id": external_id},
-            {"$set": {"payment_status": "PAID", "updated_at": utcnow_iso()}}
-        )
-        order = await db.couriers_deliveries.find_one({"external_id": external_id})
     
-    # Если статус оплаты "не оплачен", не позволяем завершить заказ (только для реальных заказов)
-    if not is_test and order.get("payment_status") == "NOT_PAID":
-        logger.warning(f"[ORDERS] ⚠️ Попытка завершить заказ {external_id} без оплаты")
-        await call.answer("Сначала проверьте оплату", show_alert=True)
+    # Если статус оплаты "не оплачен", не позволяем завершить заказ
+    if order.get("payment_status") == "NOT_PAID":
+        if is_test:
+            logger.warning(f"[ORDERS] ⚠️ Тестовый заказ {external_id} - оплата не подтверждена, нужно проверить оплату")
+            await call.answer("Сначала проверьте оплату (тестовый заказ)", show_alert=True)
+        else:
+            logger.warning(f"[ORDERS] ⚠️ Попытка завершить заказ {external_id} без оплаты")
+            await call.answer("Сначала проверьте оплату", show_alert=True)
         return
     
     redis = get_redis()
