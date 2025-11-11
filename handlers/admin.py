@@ -2,6 +2,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from typing import Optional
 from db.mongo import get_db
 from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb
 from db.redis_client import get_redis
@@ -12,6 +13,43 @@ router = Router()
 class AdminStates(StatesGroup):
     waiting_user_id = State()
     waiting_broadcast_text = State()
+
+async def _create_courier_in_odoo(name: str, tg_id: str, username: Optional[str], is_on_shift: bool) -> bool:
+    """
+    Общая функция для создания курьера в Odoo.
+    Используется как при добавлении курьера через админку, так и при синхронизации.
+    
+    Args:
+        name: Имя курьера
+        tg_id: Telegram Chat ID курьера (строка)
+        username: Username курьера (опционально, не сохраняется в Odoo)
+        is_on_shift: Статус онлайн/оффлайн
+        
+    Returns:
+        True если успешно создан, False в противном случае
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from utils.odoo import create_courier
+        logger.debug(f"[ADMIN] 🔌 Создание курьера в Odoo: tg_id={tg_id}, name={name}")
+        odoo_result = await create_courier(
+            name=name,
+            courier_tg_chat_id=tg_id,
+            phone=None,
+            username=username,
+            is_online=is_on_shift
+        )
+        if odoo_result:
+            logger.info(f"[ADMIN] ✅ Курьер создан в Odoo: tg_id={tg_id}, name={name}")
+            return True
+        else:
+            logger.warning(f"[ADMIN] ⚠️ Не удалось создать курьера в Odoo: tg_id={tg_id}, name={name}")
+            return False
+    except Exception as e:
+        logger.error(f"[ADMIN] ❌ Ошибка создания курьера в Odoo: {e}", exc_info=True)
+        return False
 
 async def is_super_admin(user_id: int) -> bool:
     import logging
@@ -144,27 +182,8 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
     from db.models import Action
     await Action.log(db, message.from_user.id, "admin_add_user", details={"added_user_id": user_id, "name": full_name})
     
-    # Создание курьера в Odoo
-    odoo_created = False
-    try:
-        from utils.odoo import create_courier
-        # create_courier использует courier_tg_chat_id как основной идентификатор
-        # Автоматически обновляет существующего курьера или создает нового
-        logger.debug(f"[ADMIN] 🔌 Создание курьера в Odoo для пользователя {user_id}")
-        odoo_result = await create_courier(
-            name=full_name,
-            courier_tg_chat_id=str(user_id),
-            phone=None,  # Телефон можно добавить позже
-            username=username,
-            is_online=False
-        )
-        if odoo_result:
-            logger.info(f"[ADMIN] ✅ Курьер создан/обновлен в Odoo для пользователя {user_id} (courier_tg_chat_id: {user_id})")
-            odoo_created = True
-        else:
-            logger.warning(f"[ADMIN] ⚠️ Не удалось создать курьера в Odoo для пользователя {user_id}")
-    except Exception as e:
-        logger.error(f"[ADMIN] ❌ Ошибка создания курьера в Odoo: {e}", exc_info=True)
+    # Создание курьера в Odoo - используем общий метод
+    odoo_created = await _create_courier_in_odoo(full_name, str(user_id), username, False)
     
     logger.debug(f"[ADMIN] 💾 Сохранение курьера в БД: user_id={user_id}, name={full_name}")
     courier = {
@@ -306,7 +325,7 @@ async def cb_sync_odoo(call: CallbackQuery):
     
     try:
         # Получаем всех курьеров из Odoo
-        from utils.odoo import get_all_couriers_from_odoo, create_courier, delete_courier
+        from utils.odoo import get_all_couriers_from_odoo, delete_courier
         logger.debug(f"[ADMIN] 🔍 Получение всех курьеров из Odoo...")
         odoo_couriers = await get_all_couriers_from_odoo()
         
@@ -341,7 +360,6 @@ async def cb_sync_odoo(call: CallbackQuery):
                 deleted_count += 1
         
         # Находим курьеров, которые есть в боте, но нет в Odoo - добавляем в Odoo
-        # Также обрабатываем случаи, когда курьер уже существует (на случай ошибок синхронизации)
         to_add_to_odoo = bot_tg_ids - odoo_tg_ids
         added_count = 0
         for tg_id in to_add_to_odoo:
@@ -352,25 +370,11 @@ async def cb_sync_odoo(call: CallbackQuery):
             is_on_shift = courier.get("is_on_shift", False)
             logger.debug(f"[ADMIN] ➕ Добавление курьера {tg_id} ({name}) в Odoo")
             
-            # На случай, если курьер уже существует в Odoo (но не попал в список из-за ошибки),
-            # сначала пытаемся удалить, затем создаем заново
-            deleted = await delete_courier(tg_id)  # Игнорируем результат - если не существует, ничего страшного
-            
-            # Небольшая задержка после удаления, чтобы Odoo успел обработать транзакцию
-            if deleted:
-                import asyncio
-                await asyncio.sleep(0.5)
-            
-            if await create_courier(
-                name=name,
-                courier_tg_chat_id=tg_id,
-                phone=None,
-                username=username,
-                is_online=is_on_shift
-            ):
+            # Используем тот же метод создания курьера, что и при добавлении через админку
+            if await _create_courier_in_odoo(name, tg_id, username, is_on_shift):
                 added_count += 1
             else:
-                logger.error(f"[ADMIN] ❌ Не удалось создать курьера {tg_id} ({name}) в Odoo после удаления")
+                logger.error(f"[ADMIN] ❌ Не удалось создать курьера {tg_id} ({name}) в Odoo")
         
         # Находим курьеров, которые есть и в боте, и в Odoo - удаляем и создаем заново если данные отличаются
         to_update = bot_tg_ids & odoo_tg_ids
@@ -384,32 +388,25 @@ async def cb_sync_odoo(call: CallbackQuery):
             bot_is_on_shift = bot_courier.get("is_on_shift", False)
             
             odoo_name = odoo_courier.get("name", "")
-            odoo_username = odoo_courier.get("username")
+            # Поле username не существует в модели Odoo, поэтому не проверяем его
             odoo_is_online = odoo_courier.get("is_online", False)
             
-            # Проверяем, нужно ли обновление
+            # Проверяем, нужно ли обновление (username не проверяем, т.к. его нет в Odoo)
             needs_update = (
                 bot_name != odoo_name or
-                bot_username != odoo_username or
                 bot_is_on_shift != odoo_is_online
             )
             
             if needs_update:
-                logger.debug(f"[ADMIN] 🔄 Обновление курьера {tg_id}: name='{odoo_name}'->'{bot_name}', username='{odoo_username}'->'{bot_username}', is_online={odoo_is_online}->{bot_is_on_shift}")
-                # Удаляем курьера из Odoo
+                logger.debug(f"[ADMIN] 🔄 Обновление курьера {tg_id}: name='{odoo_name}'->'{bot_name}', is_online={odoo_is_online}->{bot_is_on_shift}")
+                # Удаляем курьера из Odoo перед созданием заново
                 if await delete_courier(tg_id):
                     logger.debug(f"[ADMIN] ✅ Курьер {tg_id} удален из Odoo, создаем заново")
                     # Небольшая задержка после удаления, чтобы Odoo успел обработать транзакцию
                     import asyncio
                     await asyncio.sleep(0.5)
-                    # Создаем курьера заново с актуальными данными
-                    if await create_courier(
-                        name=bot_name,
-                        courier_tg_chat_id=tg_id,
-                        phone=None,
-                        username=bot_username,
-                        is_online=bot_is_on_shift
-                    ):
+                    # Используем тот же метод создания курьера, что и при добавлении через админку
+                    if await _create_courier_in_odoo(bot_name, tg_id, bot_username, bot_is_on_shift):
                         updated_count += 1
                         logger.debug(f"[ADMIN] ✅ Курьер {tg_id} успешно обновлен (удален и создан заново)")
                     else:

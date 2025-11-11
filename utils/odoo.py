@@ -206,7 +206,7 @@ async def create_courier(name: str, courier_tg_chat_id: str, phone: Optional[str
         name: Имя курьера
         courier_tg_chat_id: Telegram Chat ID курьера (строка)
         phone: Телефон курьера (опционально)
-        username: Username курьера (опционально)
+        username: Username курьера (опционально, НЕ сохраняется в Odoo - поле не существует в модели)
         is_online: Статус онлайн/оффлайн
         
     Returns:
@@ -221,8 +221,9 @@ async def create_courier(name: str, courier_tg_chat_id: str, phone: Optional[str
     if phone:
         courier_data["phone"] = phone
     
-    if username:
-        courier_data["username"] = username
+    # Поле username не существует в модели courier.person в Odoo, поэтому не добавляем его
+    # if username:
+    #     courier_data["username"] = username
     
     # В старом формате /jsonrpc аргументы для create должны быть в двойном массиве [[{...}]]
     result = await odoo_call("call", "courier.person", "create", [[courier_data]])
@@ -315,7 +316,8 @@ async def get_all_couriers_from_odoo() -> List[Dict[str, Any]]:
     Получает всех курьеров из Odoo
     
     Returns:
-        Список курьеров из Odoo с полями: id, name, phone, courier_tg_chat_id, username, is_online
+        Список курьеров из Odoo с полями: id, name, phone, courier_tg_chat_id, is_online
+        (поле username не существует в модели Odoo)
     """
     result = await odoo_call(
         "call",
@@ -323,7 +325,7 @@ async def get_all_couriers_from_odoo() -> List[Dict[str, Any]]:
         "search_read",
         [
             [],  # Пустой фильтр - получаем всех курьеров
-            ["id", "name", "phone", "courier_tg_chat_id", "username", "is_online"]
+            ["id", "name", "phone", "courier_tg_chat_id", "is_online"]  # username не существует в модели
         ]
     )
     

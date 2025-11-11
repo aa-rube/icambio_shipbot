@@ -3,14 +3,13 @@ import json
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from aiogram import Bot
-from db.mongo import get_db, init_indexes
+from db.mongo import get_db
 from db.redis_client import get_redis
 from db.models import IncomingOrder, UpdateOrder, utcnow_iso
 from keyboards.orders_kb import new_order_kb
 from utils.logger import setup_logging
 from utils.order_format import format_order_text
 from config import BOT_TOKEN, API_HOST, API_PORT
-from bson import ObjectId
 
 app = FastAPI(title="Courier Local API")
 bot = Bot(BOT_TOKEN)
