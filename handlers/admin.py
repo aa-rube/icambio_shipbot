@@ -210,6 +210,11 @@ async def process_add_user(message: Message, state: FSMContext, bot: Bot):
     )
     await state.clear()
 
+@router.callback_query(F.data == "admin:no_action")
+async def cb_no_action(call: CallbackQuery):
+    """Обработчик для пустых кнопок (когда нет username)"""
+    await call.answer()
+
 @router.callback_query(F.data == "admin:del_user")
 async def cb_del_user(call: CallbackQuery):
     import logging

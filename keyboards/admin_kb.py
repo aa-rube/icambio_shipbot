@@ -34,13 +34,33 @@ def user_list_kb(couriers: list) -> InlineKeyboardMarkup:
     for c in couriers:
         name = c.get("name", "Unknown")
         chat_id = c.get("tg_chat_id")
-        kb.append([InlineKeyboardButton(
-            text=f"🗑 {name}",
-            url=f"tg://user?id={chat_id}",
-        ), InlineKeyboardButton(
+        username = c.get("username")
+        
+        # Создаем список кнопок для этого курьера
+        buttons = []
+        
+        # Слева - кнопка с URL на tg.me/username (если есть username)
+        if username:
+            # Убираем @ если есть
+            username_clean = username.lstrip('@')
+            buttons.append(InlineKeyboardButton(
+                text=f"👤 {name}",
+                url=f"https://t.me/{username_clean}"
+            ))
+        else:
+            # Если нет username, показываем просто имя без ссылки
+            buttons.append(InlineKeyboardButton(
+                text=f"👤 {name}",
+                callback_data="admin:no_action"  # Пустой callback, ничего не делает
+            ))
+        
+        # Справа - кнопка удаления
+        buttons.append(InlineKeyboardButton(
             text="❌",
             callback_data=f"admin:confirm_del:{chat_id}"
-        )])
+        ))
+        
+        kb.append(buttons)
     kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin:back")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
