@@ -222,7 +222,7 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
     if not is_valid:
         logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
         try:
-            await call.message.delete()
+            await call.message.edit_text(error_msg or "Действие невозможно")
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
@@ -322,7 +322,7 @@ async def cb_order_accept_payment(call: CallbackQuery):
     if not is_valid:
         logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
         try:
-            await call.message.delete()
+            await call.message.edit_text(error_msg or "Действие невозможно")
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
@@ -361,7 +361,7 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     if not is_valid:
         logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
         try:
-            await call.message.delete()
+            await call.message.edit_text(error_msg or "Действие невозможно")
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
@@ -443,7 +443,7 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     if not is_valid:
         logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
         try:
-            await call.message.delete()
+            await call.message.edit_text(error_msg or "Действие невозможно")
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
@@ -633,7 +633,7 @@ async def cb_order_done(call: CallbackQuery):
     if not is_valid:
         logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
         try:
-            await call.message.delete()
+            await call.message.edit_text(error_msg or "Действие невозможно")
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
@@ -682,7 +682,7 @@ async def cb_order_problem(call: CallbackQuery):
     if not is_valid:
         logger.warning(f"[ORDERS] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
         try:
-            await call.message.delete()
+            await call.message.edit_text(error_msg or "Действие невозможно")
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)

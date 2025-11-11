@@ -1054,7 +1054,7 @@ async def cb_order_edit(call: CallbackQuery):
     if not is_valid:
         logger.warning(f"[ADMIN] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
         try:
-            await call.message.delete()
+            await call.message.edit_text(error_msg or "Действие невозможно")
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
@@ -1101,7 +1101,7 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
     if not is_valid:
         logger.warning(f"[ADMIN] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
         try:
-            await call.message.delete()
+            await call.message.edit_text(error_msg or "Действие невозможно")
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
@@ -1193,7 +1193,7 @@ async def cb_order_delete(call: CallbackQuery, bot: Bot):
     if not order:
         logger.warning(f"[ADMIN] ⚠️ Заказ {external_id} не найден (возможно уже удален)")
         try:
-            await call.message.delete()
+            await call.message.edit_text("Заказ не найден или уже удален")
         except:
             pass
         await call.answer("Заказ не найден или уже удален", show_alert=True)
@@ -1308,7 +1308,7 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
     if not is_valid:
         logger.warning(f"[ADMIN] ⚠️ Действие отклонено для заказа {external_id}: {error_msg}")
         try:
-            await call.message.delete()
+            await call.message.edit_text(error_msg or "Действие невозможно")
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
