@@ -306,7 +306,7 @@ async def cb_sync_odoo(call: CallbackQuery):
     
     try:
         # Получаем всех курьеров из Odoo
-        from utils.odoo import get_all_couriers_from_odoo, create_courier, delete_courier, update_courier_info
+        from utils.odoo import get_all_couriers_from_odoo, create_courier, delete_courier
         logger.debug(f"[ADMIN] 🔍 Получение всех курьеров из Odoo...")
         odoo_couriers = await get_all_couriers_from_odoo()
         
@@ -341,6 +341,7 @@ async def cb_sync_odoo(call: CallbackQuery):
                 deleted_count += 1
         
         # Находим курьеров, которые есть в боте, но нет в Odoo - добавляем в Odoo
+        # Также обрабатываем случаи, когда курьер уже существует (на случай ошибок синхронизации)
         to_add_to_odoo = bot_tg_ids - odoo_tg_ids
         added_count = 0
         for tg_id in to_add_to_odoo:
@@ -350,6 +351,11 @@ async def cb_sync_odoo(call: CallbackQuery):
             username = courier.get("username")
             is_on_shift = courier.get("is_on_shift", False)
             logger.debug(f"[ADMIN] ➕ Добавление курьера {tg_id} ({name}) в Odoo")
+            
+            # На случай, если курьер уже существует в Odoo (но не попал в список из-за ошибки),
+            # сначала пытаемся удалить, затем создаем заново
+            await delete_courier(tg_id)  # Игнорируем результат - если не существует, ничего страшного
+            
             if await create_courier(
                 name=name,
                 courier_tg_chat_id=tg_id,
@@ -359,7 +365,7 @@ async def cb_sync_odoo(call: CallbackQuery):
             ):
                 added_count += 1
         
-        # Находим курьеров, которые есть и в боте, и в Odoo - обновляем данные если отличаются
+        # Находим курьеров, которые есть и в боте, и в Odoo - удаляем и создаем заново если данные отличаются
         to_update = bot_tg_ids & odoo_tg_ids
         updated_count = 0
         for tg_id in to_update:
@@ -375,32 +381,31 @@ async def cb_sync_odoo(call: CallbackQuery):
             odoo_is_online = odoo_courier.get("is_online", False)
             
             # Проверяем, нужно ли обновление
-            needs_update = False
-            update_data = {}
-            
-            if bot_name != odoo_name:
-                needs_update = True
-                update_data["name"] = bot_name
-                logger.debug(f"[ADMIN] 🔄 Обновление name для {tg_id}: '{odoo_name}' -> '{bot_name}'")
-            
-            if bot_username != odoo_username:
-                needs_update = True
-                update_data["username"] = bot_username
-                logger.debug(f"[ADMIN] 🔄 Обновление username для {tg_id}: '{odoo_username}' -> '{bot_username}'")
-            
-            if bot_is_on_shift != odoo_is_online:
-                needs_update = True
-                update_data["is_online"] = bot_is_on_shift
-                logger.debug(f"[ADMIN] 🔄 Обновление is_online для {tg_id}: {odoo_is_online} -> {bot_is_on_shift}")
+            needs_update = (
+                bot_name != odoo_name or
+                bot_username != odoo_username or
+                bot_is_on_shift != odoo_is_online
+            )
             
             if needs_update:
-                if await update_courier_info(
-                    courier_tg_chat_id=tg_id,
-                    name=update_data.get("name"),
-                    username=update_data.get("username"),
-                    is_online=update_data.get("is_online")
-                ):
-                    updated_count += 1
+                logger.debug(f"[ADMIN] 🔄 Обновление курьера {tg_id}: name='{odoo_name}'->'{bot_name}', username='{odoo_username}'->'{bot_username}', is_online={odoo_is_online}->{bot_is_on_shift}")
+                # Удаляем курьера из Odoo
+                if await delete_courier(tg_id):
+                    logger.debug(f"[ADMIN] ✅ Курьер {tg_id} удален из Odoo, создаем заново")
+                    # Создаем курьера заново с актуальными данными
+                    if await create_courier(
+                        name=bot_name,
+                        courier_tg_chat_id=tg_id,
+                        phone=None,
+                        username=bot_username,
+                        is_online=bot_is_on_shift
+                    ):
+                        updated_count += 1
+                        logger.debug(f"[ADMIN] ✅ Курьер {tg_id} успешно обновлен (удален и создан заново)")
+                    else:
+                        logger.warning(f"[ADMIN] ⚠️ Не удалось создать курьера {tg_id} после удаления")
+                else:
+                    logger.warning(f"[ADMIN] ⚠️ Не удалось удалить курьера {tg_id} для обновления")
         
         # Формируем сообщение с результатами
         result_text = (

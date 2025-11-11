@@ -1,6 +1,6 @@
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
-from keyboards.main_menu import main_menu, remove_keyboard
+from keyboards.main_menu import main_menu
 from db.mongo import get_db
 from db.redis_client import get_redis
 from config import SHIFT_TTL, LOC_TTL, MANAGER_CHAT_ID

@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def main_menu(is_on_shift: bool = False) -> InlineKeyboardMarkup:
     if is_on_shift:
@@ -12,6 +12,3 @@ def main_menu(is_on_shift: bool = False) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📋 Мои заказы", callback_data="orders:list")],
         ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
-
-def remove_keyboard() -> ReplyKeyboardRemove:
-    return ReplyKeyboardRemove()

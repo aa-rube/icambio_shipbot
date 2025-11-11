@@ -3,26 +3,8 @@ from aiogram.types import Message
 from keyboards.main_menu import main_menu
 from db.mongo import get_db
 from datetime import datetime, timezone
-from bson import ObjectId
 
 router = Router()
-
-async def _ensure_courier(db, chat_id: int, tg_user) -> dict:
-    courier = await db.couriers.find_one({"tg_chat_id": chat_id})
-    if not courier:
-        name = (tg_user.first_name or "") + (" " + tg_user.last_name if tg_user.last_name else "")
-        name = name.strip() or tg_user.username or f"courier_{chat_id}"
-        courier = {
-            "name": name,
-            "username": tg_user.username,
-            "tg_chat_id": chat_id,
-            "is_on_shift": False,
-            "shift_started_at": None,
-            "last_location": None,
-        }
-        res = await db.couriers.insert_one(courier)
-        courier["_id"] = res.inserted_id
-    return courier
 
 @router.message(F.text == "/start")
 @router.message(F.text == "start")
