@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from typing import Optional
 from db.mongo import get_db
-from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb, active_orders_kb, order_edit_kb, courier_list_kb
+from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb, active_orders_kb, order_edit_kb, courier_list_kb, all_deliveries_kb
 from db.redis_client import get_redis
 from utils.url_shortener import shorten_url
 
@@ -584,7 +584,9 @@ async def cb_on_shift_couriers(call: CallbackQuery):
         if shift_started_at:
             try:
                 shift_dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
-                shift_time_text = shift_dt.strftime("%H:%M")
+                months_ru = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+                month_ru = months_ru[shift_dt.month - 1]
+                shift_time_text = f"{shift_dt.day} {month_ru}. {shift_dt.strftime('%H:%M')}"
             except:
                 shift_time_text = shift_started_at
         
@@ -604,28 +606,21 @@ async def cb_on_shift_couriers(call: CallbackQuery):
             temp_msg = await bot.send_message(admin_chat_id, text)
             msg_id = temp_msg.message_id
             
-            # Проверяем наличие маршрута для этого курьера
-            from datetime import timedelta
-            time_72h_ago = now - timedelta(hours=72)
-            has_route = await db.locations.find_one({
-                "chat_id": chat_id,
-                "timestamp_ns": {"$gte": int(time_72h_ago.timestamp() * 1e9)}
-            }) is not None
-            
             # Редактируем сообщение с правильной клавиатурой
+            # Кнопка "Маршрут сегодня" теперь всегда показывается
             if idx == len(couriers) - 1:
                 # Для последнего сообщения добавляем кнопку "Назад"
                 await bot.edit_message_reply_markup(
                     chat_id=admin_chat_id,
                     message_id=msg_id,
-                    reply_markup=courier_location_with_back_kb(chat_id, has_route)
+                    reply_markup=courier_location_with_back_kb(chat_id)
                 )
             else:
-                # Для остальных сообщений кнопки "Где курьер?" и "Маршрут сегодня" (если доступен)
+                # Для остальных сообщений кнопки "Где курьер?" и "Маршрут сегодня"
                 await bot.edit_message_reply_markup(
                     chat_id=admin_chat_id,
                     message_id=msg_id,
-                    reply_markup=courier_location_kb(chat_id, has_route)
+                    reply_markup=courier_location_kb(chat_id)
                 )
         except Exception as e:
             logger.error(f"Failed to create courier message for {chat_id}: {e}", exc_info=True)
@@ -729,7 +724,7 @@ async def cb_show_route(call: CallbackQuery):
         ).sort("timestamp_ns", 1).to_list(10000)  # Сортируем от меньшего к большему
         
         if not locations:
-            await call.answer("❌ Локации не найдены", show_alert=True)
+            await call.answer("❌ Данных недостаточно для построения маршрута", show_alert=True)
             return
         
         # Проверяем последнюю локацию - она должна быть не старше 24 часов
@@ -865,7 +860,9 @@ async def cb_back_to_courier(call: CallbackQuery):
         if shift_started_at:
             try:
                 shift_dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
-                shift_time_text = shift_dt.strftime("%H:%M")
+                months_ru = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+                month_ru = months_ru[shift_dt.month - 1]
+                shift_time_text = f"{shift_dt.day} {month_ru}. {shift_dt.strftime('%H:%M')}"
             except:
                 shift_time_text = shift_started_at
         
@@ -879,16 +876,9 @@ async def cb_back_to_courier(call: CallbackQuery):
             f"Вышел на смену: {shift_time_text}"
         )
         
-        # Проверяем наличие маршрута для этого курьера
-        from datetime import timedelta
-        time_72h_ago = now - timedelta(hours=72)
-        has_route = await db.locations.find_one({
-            "chat_id": chat_id,
-            "timestamp_ns": {"$gte": int(time_72h_ago.timestamp() * 1e9)}
-        }) is not None
-        
         # Восстанавливаем исходное сообщение с кнопками
-        await call.message.edit_text(text, reply_markup=courier_location_kb(chat_id, has_route))
+        # Кнопка "Маршрут сегодня" теперь всегда показывается
+        await call.message.edit_text(text, reply_markup=courier_location_kb(chat_id))
         await call.answer()
     except Exception as e:
         logger.error(f"Failed to restore courier message for {chat_id}: {e}", exc_info=True)
@@ -979,6 +969,96 @@ async def process_broadcast(message: Message, state: FSMContext, bot: Bot):
         reply_markup=admin_main_kb()
     )
     await state.clear()
+
+@router.callback_query(F.data == "admin:all_deliveries")
+async def cb_all_deliveries(call: CallbackQuery):
+    """Обработчик кнопки 'Все доставки' - показывает статистику всех заказов"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    logger.info(f"[ADMIN] 📦 Админ {call.from_user.id} запрашивает статистику всех доставок")
+    
+    db = await get_db()
+    from datetime import datetime, timezone
+    
+    # Получаем текущую дату (начало и конец дня)
+    now = datetime.now(timezone.utc)
+    start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    end_today = datetime(now.year, now.month, now.day, 23, 59, 59, tzinfo=timezone.utc)
+    
+    # Всего заказов в ожидании (waiting)
+    waiting_count = await db.couriers_deliveries.count_documents({"status": "waiting"})
+    
+    # Всего заказов в пути (in_transit)
+    in_transit_count = await db.couriers_deliveries.count_documents({"status": "in_transit"})
+    
+    # Доставлено сегодня (done с 0:00 до конца текущего дня)
+    # Используем updated_at или created_at для определения даты доставки
+    # Обычно done заказы обновляются при завершении, используем updated_at
+    delivered_today = await db.couriers_deliveries.count_documents({
+        "status": "done",
+        "updated_at": {
+            "$gte": start_today.isoformat(),
+            "$lte": end_today.isoformat()
+        }
+    })
+    
+    text = (
+        f"📦 Все доставки\n\n"
+        f"Всего заказов в ожидании: {waiting_count}\n"
+        f"Всего заказов в пути: {in_transit_count}\n"
+        f"Доставлено сегодня: {delivered_today}"
+    )
+    
+    await call.message.edit_text(text, reply_markup=all_deliveries_kb())
+    await call.answer()
+
+@router.callback_query(F.data == "admin:view_all_orders")
+async def cb_view_all_orders(call: CallbackQuery, bot: Bot):
+    """Обработчик кнопки 'Посмотреть все' - показывает все активные заказы без привязки к курьеру"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    logger.info(f"[ADMIN] 👁 Админ {call.from_user.id} запрашивает все активные заказы")
+    
+    db = await get_db()
+    admin_chat_id = call.message.chat.id
+    
+    # Получаем все активные заказы (waiting и in_transit) без фильтра по курьеру
+    orders = await db.couriers_deliveries.find({
+        "status": {"$in": ["waiting", "in_transit"]}
+    }).sort("priority", -1).sort("created_at", 1).to_list(1000)
+    
+    if not orders:
+        await call.answer("Нет активных заказов", show_alert=True)
+        return
+    
+    # Удаляем исходное сообщение со статистикой
+    try:
+        await call.message.delete()
+    except:
+        pass
+    
+    # Отправляем каждое сообщение с заказом отдельно (как у курьеров)
+    from utils.order_format import format_order_text
+    from keyboards.orders_kb import new_order_kb, in_transit_kb
+    
+    for order in orders:
+        text = format_order_text(order)
+        if order["status"] == "waiting":
+            await bot.send_message(admin_chat_id, text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
+        elif order["status"] == "in_transit":
+            await bot.send_message(admin_chat_id, text, parse_mode="HTML", reply_markup=in_transit_kb(order["external_id"], order))
+    
+    await call.answer()
 
 @router.callback_query(F.data.startswith("admin:active_orders:"))
 async def cb_active_orders(call: CallbackQuery):

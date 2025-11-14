@@ -8,12 +8,20 @@ def admin_main_kb() -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="🔄 Синхронизация с Odoo", callback_data="admin:sync_odoo")],
         [InlineKeyboardButton(text="🚚 Курьеры на смене", callback_data="admin:on_shift")],
+        [InlineKeyboardButton(text="📦 Все доставки", callback_data="admin:all_deliveries")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin:broadcast")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def back_to_admin_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin:back")]
+    ])
+
+def all_deliveries_kb() -> InlineKeyboardMarkup:
+    """Клавиатура для сообщения 'Все доставки'"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👁 Посмотреть все", callback_data="admin:view_all_orders")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin:back")]
     ])
 
@@ -80,30 +88,22 @@ def broadcast_kb() -> InlineKeyboardMarkup:
 
 def courier_location_kb(chat_id: int, has_route: bool = False) -> InlineKeyboardMarkup:
     buttons = []
-    if has_route:
-        # Если есть маршрут, добавляем обе кнопки в один ряд
-        buttons.append([
-            InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}"),
-            InlineKeyboardButton(text="🗺 Маршрут сегодня", callback_data=f"admin:show_route:{chat_id}")
-        ])
-    else:
-        # Если нет маршрута, только кнопка локации
-        buttons.append([InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}")])
+    # Всегда показываем обе кнопки в один ряд
+    buttons.append([
+        InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}"),
+        InlineKeyboardButton(text="🗺 Маршрут сегодня", callback_data=f"admin:show_route:{chat_id}")
+    ])
     # Добавляем кнопку "Активные заказы"
     buttons.append([InlineKeyboardButton(text="📦 Активные заказы", callback_data=f"admin:active_orders:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def courier_location_with_back_kb(chat_id: int, has_route: bool = False) -> InlineKeyboardMarkup:
     buttons = []
-    if has_route:
-        # Если есть маршрут, добавляем обе кнопки в один ряд
-        buttons.append([
-            InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}"),
-            InlineKeyboardButton(text="🗺 Маршрут сегодня", callback_data=f"admin:show_route:{chat_id}")
-        ])
-    else:
-        # Если нет маршрута, только кнопка локации
-        buttons.append([InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}")])
+    # Всегда показываем обе кнопки в один ряд
+    buttons.append([
+        InlineKeyboardButton(text="📍 Где курьер?", callback_data=f"admin:show_location:{chat_id}"),
+        InlineKeyboardButton(text="🗺 Маршрут сегодня", callback_data=f"admin:show_route:{chat_id}")
+    ])
     # Добавляем кнопку "Активные заказы"
     buttons.append([InlineKeyboardButton(text="📦 Активные заказы", callback_data=f"admin:active_orders:{chat_id}")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_from_couriers:{chat_id}")])
