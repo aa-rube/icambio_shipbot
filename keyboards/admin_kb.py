@@ -25,7 +25,7 @@ def all_deliveries_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin:back")]
     ])
 
-def all_orders_list_kb(orders: list) -> InlineKeyboardMarkup:
+def all_orders_list_kb(orders: list, page: int = 0, total_pages: int = 1) -> InlineKeyboardMarkup:
     """Клавиатура со списком всех активных заказов (без привязки к курьеру)"""
     buttons = []
     for order in orders:
@@ -35,6 +35,17 @@ def all_orders_list_kb(orders: list) -> InlineKeyboardMarkup:
         buttons.append([
             InlineKeyboardButton(text=f"{external_id} ✏️", callback_data=f"admin:order_edit:{external_id}")
         ])
+    
+    # Навигация между страницами
+    nav_buttons = []
+    if total_pages > 1:
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton(text="◀️ Предыдущая", callback_data=f"admin:all_orders_page:{page - 1}"))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton(text="Следующая ▶️", callback_data=f"admin:all_orders_page:{page + 1}"))
+        if nav_buttons:
+            buttons.append(nav_buttons)
+    
     # Кнопка "Назад" для возврата к статистике "Все доставки"
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin:all_deliveries")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -135,7 +146,7 @@ def route_back_kb(chat_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_to_courier:{chat_id}")]
     ])
 
-def active_orders_kb(orders: list, chat_id: int) -> InlineKeyboardMarkup:
+def active_orders_kb(orders: list, chat_id: int, page: int = 0, total_pages: int = 1) -> InlineKeyboardMarkup:
     """Клавиатура со списком активных заказов курьера"""
     buttons = []
     for order in orders:
@@ -145,6 +156,17 @@ def active_orders_kb(orders: list, chat_id: int) -> InlineKeyboardMarkup:
         buttons.append([
             InlineKeyboardButton(text=f"{external_id} ✏️", callback_data=f"admin:order_edit:{external_id}:{chat_id}")
         ])
+    
+    # Навигация между страницами
+    nav_buttons = []
+    if total_pages > 1:
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton(text="◀️ Предыдущая", callback_data=f"admin:active_orders_page:{chat_id}:{page - 1}"))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton(text="Следующая ▶️", callback_data=f"admin:active_orders_page:{chat_id}:{page + 1}"))
+        if nav_buttons:
+            buttons.append(nav_buttons)
+    
     # Кнопка "Назад" для возврата к курьеру
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_to_courier:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
