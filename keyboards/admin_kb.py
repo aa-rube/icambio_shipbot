@@ -25,6 +25,20 @@ def all_deliveries_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin:back")]
     ])
 
+def all_orders_list_kb(orders: list) -> InlineKeyboardMarkup:
+    """Клавиатура со списком всех активных заказов (без привязки к курьеру)"""
+    buttons = []
+    for order in orders:
+        external_id = order.get("external_id", "N/A")
+        # Объединенная кнопка с номером заказа и карандашом
+        # Для всех заказов не передаем original_courier_chat_id, так как это общий список
+        buttons.append([
+            InlineKeyboardButton(text=f"{external_id} ✏️", callback_data=f"admin:order_edit:{external_id}")
+        ])
+    # Кнопка "Назад" для возврата к статистике "Все доставки"
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin:all_deliveries")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 def request_user_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[
@@ -135,14 +149,29 @@ def active_orders_kb(orders: list, chat_id: int) -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_to_courier:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def order_edit_kb(external_id: str, chat_id: int) -> InlineKeyboardMarkup:
+def order_edit_kb(external_id: str, chat_id: int = None, from_all_orders: bool = False) -> InlineKeyboardMarkup:
     """Клавиатура для редактирования заказа"""
-    buttons = [
-        [InlineKeyboardButton(text="✅ Заказ выполнен", callback_data=f"admin:order_complete:{external_id}:{chat_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить заказ", callback_data=f"admin:order_delete:{external_id}:{chat_id}")],
-        [InlineKeyboardButton(text="👤 Назначить курьера", callback_data=f"admin:order_assign_courier:{external_id}:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:active_orders:{chat_id}")]
-    ]
+    buttons = []
+    
+    # Если chat_id передан, используем его для callback_data
+    if chat_id is not None:
+        buttons.append([InlineKeyboardButton(text="✅ Заказ выполнен", callback_data=f"admin:order_complete:{external_id}:{chat_id}")])
+        buttons.append([InlineKeyboardButton(text="🗑 Удалить заказ", callback_data=f"admin:order_delete:{external_id}:{chat_id}")])
+        buttons.append([InlineKeyboardButton(text="👤 Назначить курьера", callback_data=f"admin:order_assign_courier:{external_id}:{chat_id}")])
+    else:
+        # Если chat_id не передан (заказ из общего списка), не передаем его в callback_data
+        buttons.append([InlineKeyboardButton(text="✅ Заказ выполнен", callback_data=f"admin:order_complete:{external_id}")])
+        buttons.append([InlineKeyboardButton(text="🗑 Удалить заказ", callback_data=f"admin:order_delete:{external_id}")])
+        buttons.append([InlineKeyboardButton(text="👤 Назначить курьера", callback_data=f"admin:order_assign_courier:{external_id}")])
+    
+    # Кнопка "Назад" - зависит от того, откуда открыт заказ
+    if from_all_orders:
+        buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin:view_all_orders")])
+    elif chat_id is not None:
+        buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:active_orders:{chat_id}")])
+    else:
+        buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin:view_all_orders")])
+    
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def courier_list_kb(couriers: list, external_id: str, original_courier_chat_id: int = None) -> InlineKeyboardMarkup:
@@ -162,9 +191,10 @@ def courier_list_kb(couriers: list, external_id: str, original_courier_chat_id: 
                 text=name,
                 callback_data=f"admin:assign_courier:{external_id}:{courier_chat_id}"
             )])
-    # Кнопка "Назад" с исходным courier_chat_id
+    # Кнопка "Назад" - зависит от того, откуда открыт заказ
     if original_courier_chat_id:
         buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:order_edit:{external_id}:{original_courier_chat_id}")])
     else:
+        # Если заказ из общего списка, возвращаем к общему списку
         buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:order_edit:{external_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from typing import Optional
 from db.mongo import get_db
-from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb, active_orders_kb, order_edit_kb, courier_list_kb, all_deliveries_kb
+from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb, active_orders_kb, order_edit_kb, courier_list_kb, all_deliveries_kb, all_orders_list_kb
 from db.redis_client import get_redis
 from utils.url_shortener import shorten_url
 
@@ -1018,8 +1018,8 @@ async def cb_all_deliveries(call: CallbackQuery):
     await call.answer()
 
 @router.callback_query(F.data == "admin:view_all_orders")
-async def cb_view_all_orders(call: CallbackQuery, bot: Bot):
-    """Обработчик кнопки 'Посмотреть все' - показывает все активные заказы без привязки к курьеру"""
+async def cb_view_all_orders(call: CallbackQuery):
+    """Обработчик кнопки 'Посмотреть все' - показывает список всех активных заказов"""
     import logging
     logger = logging.getLogger(__name__)
     
@@ -1030,7 +1030,6 @@ async def cb_view_all_orders(call: CallbackQuery, bot: Bot):
     logger.info(f"[ADMIN] 👁 Админ {call.from_user.id} запрашивает все активные заказы")
     
     db = await get_db()
-    admin_chat_id = call.message.chat.id
     
     # Получаем все активные заказы (waiting и in_transit) без фильтра по курьеру
     orders = await db.couriers_deliveries.find({
@@ -1038,26 +1037,27 @@ async def cb_view_all_orders(call: CallbackQuery, bot: Bot):
     }).sort("priority", -1).sort("created_at", 1).to_list(1000)
     
     if not orders:
-        await call.answer("Нет активных заказов", show_alert=True)
+        await call.message.edit_text(
+            "📦 Все активные заказы\n\nНет активных заказов.",
+            reply_markup=all_orders_list_kb(orders)
+        )
+        await call.answer()
         return
     
-    # Удаляем исходное сообщение со статистикой
-    try:
-        await call.message.delete()
-    except:
-        pass
-    
-    # Отправляем каждое сообщение с заказом отдельно (как у курьеров)
-    from utils.order_format import format_order_text
-    from keyboards.orders_kb import new_order_kb, in_transit_kb
-    
+    # Формируем текст со списком заказов
+    text = "📦 Все активные заказы:\n\n"
     for order in orders:
-        text = format_order_text(order)
-        if order["status"] == "waiting":
-            await bot.send_message(admin_chat_id, text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
-        elif order["status"] == "in_transit":
-            await bot.send_message(admin_chat_id, text, parse_mode="HTML", reply_markup=in_transit_kb(order["external_id"], order))
+        external_id = order.get("external_id", "N/A")
+        address = order.get("address", "—")
+        client = order.get("client", {})
+        client_tg = client.get("tg", "")
+        client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
+        text += f"<b>{external_id}</b> - {address}\n"
+        if client_username:
+            text += f"   {client_username}\n"
+        text += "\n"
     
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=all_orders_list_kb(orders))
     await call.answer()
 
 @router.callback_query(F.data.startswith("admin:active_orders:"))
@@ -1142,7 +1142,10 @@ async def cb_order_edit(call: CallbackQuery):
     
     db = await get_db()
     
-    # Если исходный courier_chat_id не передан, используем текущий из заказа
+    # Определяем, откуда открыт заказ (из общего списка или из списка курьера)
+    from_all_orders = (original_courier_chat_id is None)
+    
+    # Если исходный courier_chat_id не передан, используем текущий из заказа для кнопок действий
     if original_courier_chat_id is None:
         original_courier_chat_id = order.get("courier_tg_chat_id")
     
@@ -1150,7 +1153,7 @@ async def cb_order_edit(call: CallbackQuery):
     from utils.order_format import format_order_text
     text = format_order_text(order)
     
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=order_edit_kb(external_id, original_courier_chat_id))
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=order_edit_kb(external_id, original_courier_chat_id, from_all_orders))
     await call.answer()
 
 @router.callback_query(F.data.startswith("admin:order_complete:"))
@@ -1222,31 +1225,60 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
     # Показываем попап с подтверждением
     await call.answer("✅ Заказ выполнен", show_alert=True)
     
-    # Получаем обновленный список заказов исходного курьера (того, с которым работали)
-    orders = await db.couriers_deliveries.find({
-        "courier_tg_chat_id": original_courier_chat_id,
-        "status": {"$in": ["waiting", "in_transit"]}
-    }).sort("priority", -1).sort("created_at", 1).to_list(100)
+    # Определяем, откуда был открыт заказ (из общего списка или из списка курьера)
+    # Если original_courier_chat_id не был передан в callback_data, значит заказ из общего списка
+    from_all_orders = (len(parts) == 3)  # admin:order_complete:external_id (без chat_id)
     
-    if orders:
-        # Формируем текст со списком заказов
-        text = "📦 Активные заказы:\n\n"
-        for order in orders:
-            ext_id = order.get("external_id", "N/A")
-            addr = order.get("address", "—")
-            client = order.get("client", {})
-            client_tg = client.get("tg", "")
-            client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
-            text += f"<b>{ext_id}</b> - {addr}\n"
-            if client_username:
-                text += f"   {client_username}\n"
-            text += "\n"
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, original_courier_chat_id))
+    if from_all_orders:
+        # Возвращаем к общему списку всех активных заказов
+        orders = await db.couriers_deliveries.find({
+            "status": {"$in": ["waiting", "in_transit"]}
+        }).sort("priority", -1).sort("created_at", 1).to_list(1000)
+        
+        if orders:
+            text = "📦 Все активные заказы:\n\n"
+            for order in orders:
+                ext_id = order.get("external_id", "N/A")
+                addr = order.get("address", "—")
+                client = order.get("client", {})
+                client_tg = client.get("tg", "")
+                client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
+                text += f"<b>{ext_id}</b> - {addr}\n"
+                if client_username:
+                    text += f"   {client_username}\n"
+                text += "\n"
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=all_orders_list_kb(orders))
+        else:
+            await call.message.edit_text(
+                "📦 Все активные заказы\n\nНет активных заказов.",
+                reply_markup=all_orders_list_kb([])
+            )
     else:
-        await call.message.edit_text(
-            "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
-            reply_markup=active_orders_kb([], original_courier_chat_id)
-        )
+        # Возвращаем к списку заказов исходного курьера
+        orders = await db.couriers_deliveries.find({
+            "courier_tg_chat_id": original_courier_chat_id,
+            "status": {"$in": ["waiting", "in_transit"]}
+        }).sort("priority", -1).sort("created_at", 1).to_list(100)
+        
+        if orders:
+            # Формируем текст со списком заказов
+            text = "📦 Активные заказы:\n\n"
+            for order in orders:
+                ext_id = order.get("external_id", "N/A")
+                addr = order.get("address", "—")
+                client = order.get("client", {})
+                client_tg = client.get("tg", "")
+                client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
+                text += f"<b>{ext_id}</b> - {addr}\n"
+                if client_username:
+                    text += f"   {client_username}\n"
+                text += "\n"
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, original_courier_chat_id))
+        else:
+            await call.message.edit_text(
+                "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
+                reply_markup=active_orders_kb([], original_courier_chat_id)
+            )
 
 @router.callback_query(F.data.startswith("admin:order_delete:"))
 async def cb_order_delete(call: CallbackQuery, bot: Bot):
@@ -1302,31 +1334,59 @@ async def cb_order_delete(call: CallbackQuery, bot: Bot):
     # Показываем попап с подтверждением
     await call.answer("🗑 Заказ удален", show_alert=True)
     
-    # Получаем обновленный список заказов исходного курьера (того, с которым работали)
-    orders = await db.couriers_deliveries.find({
-        "courier_tg_chat_id": original_courier_chat_id,
-        "status": {"$in": ["waiting", "in_transit"]}
-    }).sort("priority", -1).sort("created_at", 1).to_list(100)
+    # Определяем, откуда был открыт заказ (из общего списка или из списка курьера)
+    from_all_orders = (len(parts) == 3)  # admin:order_delete:external_id (без chat_id)
     
-    if orders:
-        # Формируем текст со списком заказов
-        text = "📦 Активные заказы:\n\n"
-        for order in orders:
-            ext_id = order.get("external_id", "N/A")
-            addr = order.get("address", "—")
-            client = order.get("client", {})
-            client_tg = client.get("tg", "")
-            client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
-            text += f"<b>{ext_id}</b> - {addr}\n"
-            if client_username:
-                text += f"   {client_username}\n"
-            text += "\n"
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, original_courier_chat_id))
+    if from_all_orders:
+        # Возвращаем к общему списку всех активных заказов
+        orders = await db.couriers_deliveries.find({
+            "status": {"$in": ["waiting", "in_transit"]}
+        }).sort("priority", -1).sort("created_at", 1).to_list(1000)
+        
+        if orders:
+            text = "📦 Все активные заказы:\n\n"
+            for order in orders:
+                ext_id = order.get("external_id", "N/A")
+                addr = order.get("address", "—")
+                client = order.get("client", {})
+                client_tg = client.get("tg", "")
+                client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
+                text += f"<b>{ext_id}</b> - {addr}\n"
+                if client_username:
+                    text += f"   {client_username}\n"
+                text += "\n"
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=all_orders_list_kb(orders))
+        else:
+            await call.message.edit_text(
+                "📦 Все активные заказы\n\nНет активных заказов.",
+                reply_markup=all_orders_list_kb([])
+            )
     else:
-        await call.message.edit_text(
-            "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
-            reply_markup=active_orders_kb([], original_courier_chat_id)
-        )
+        # Возвращаем к списку заказов исходного курьера
+        orders = await db.couriers_deliveries.find({
+            "courier_tg_chat_id": original_courier_chat_id,
+            "status": {"$in": ["waiting", "in_transit"]}
+        }).sort("priority", -1).sort("created_at", 1).to_list(100)
+        
+        if orders:
+            # Формируем текст со списком заказов
+            text = "📦 Активные заказы:\n\n"
+            for order in orders:
+                ext_id = order.get("external_id", "N/A")
+                addr = order.get("address", "—")
+                client = order.get("client", {})
+                client_tg = client.get("tg", "")
+                client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
+                text += f"<b>{ext_id}</b> - {addr}\n"
+                if client_username:
+                    text += f"   {client_username}\n"
+                text += "\n"
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, original_courier_chat_id))
+        else:
+            await call.message.edit_text(
+                "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
+                reply_markup=active_orders_kb([], original_courier_chat_id)
+            )
 
 @router.callback_query(F.data.startswith("admin:order_assign_courier:"))
 async def cb_order_assign_courier(call: CallbackQuery):
@@ -1457,28 +1517,57 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
     # Показываем попап с подтверждением
     await call.answer("✅ Курьер назначен", show_alert=True)
     
-    # Получаем обновленный список заказов исходного курьера (того, с которым работали)
-    orders = await db.couriers_deliveries.find({
-        "courier_tg_chat_id": old_courier_chat_id,
-        "status": {"$in": ["waiting", "in_transit"]}
-    }).sort("priority", -1).sort("created_at", 1).to_list(100)
+    # Определяем, откуда был открыт заказ (из общего списка или из списка курьера)
+    # Если original_courier_chat_id не был передан в callback_data, значит заказ из общего списка
+    from_all_orders = (len(parts) == 4)  # admin:assign_courier:external_id:new_courier_chat_id (без original_courier_chat_id)
     
-    if orders:
-        # Формируем текст со списком заказов
-        text = "📦 Активные заказы:\n\n"
-        for order in orders:
-            ext_id = order.get("external_id", "N/A")
-            addr = order.get("address", "—")
-            client = order.get("client", {})
-            client_tg = client.get("tg", "")
-            client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
-            text += f"<b>{ext_id}</b> - {addr}\n"
-            if client_username:
-                text += f"   {client_username}\n"
-            text += "\n"
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, old_courier_chat_id))
+    if from_all_orders:
+        # Возвращаем к общему списку всех активных заказов
+        orders = await db.couriers_deliveries.find({
+            "status": {"$in": ["waiting", "in_transit"]}
+        }).sort("priority", -1).sort("created_at", 1).to_list(1000)
+        
+        if orders:
+            text = "📦 Все активные заказы:\n\n"
+            for order in orders:
+                ext_id = order.get("external_id", "N/A")
+                addr = order.get("address", "—")
+                client = order.get("client", {})
+                client_tg = client.get("tg", "")
+                client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
+                text += f"<b>{ext_id}</b> - {addr}\n"
+                if client_username:
+                    text += f"   {client_username}\n"
+                text += "\n"
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=all_orders_list_kb(orders))
+        else:
+            await call.message.edit_text(
+                "📦 Все активные заказы\n\nНет активных заказов.",
+                reply_markup=all_orders_list_kb([])
+            )
     else:
-        await call.message.edit_text(
-            "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
-            reply_markup=active_orders_kb([], old_courier_chat_id)
-        )
+        # Возвращаем к списку заказов исходного курьера
+        orders = await db.couriers_deliveries.find({
+            "courier_tg_chat_id": original_courier_chat_id,
+            "status": {"$in": ["waiting", "in_transit"]}
+        }).sort("priority", -1).sort("created_at", 1).to_list(100)
+        
+        if orders:
+            # Формируем текст со списком заказов
+            text = "📦 Активные заказы:\n\n"
+            for order in orders:
+                ext_id = order.get("external_id", "N/A")
+                addr = order.get("address", "—")
+                client = order.get("client", {})
+                client_tg = client.get("tg", "")
+                client_username = f"@{client_tg.lstrip('@')}" if client_tg else ""
+                text += f"<b>{ext_id}</b> - {addr}\n"
+                if client_username:
+                    text += f"   {client_username}\n"
+                text += "\n"
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=active_orders_kb(orders, original_courier_chat_id))
+        else:
+            await call.message.edit_text(
+                "📦 Активные заказы\n\nНет активных заказов у этого курьера.",
+                reply_markup=active_orders_kb([], original_courier_chat_id)
+            )
