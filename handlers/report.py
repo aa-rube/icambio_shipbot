@@ -1,5 +1,5 @@
 from aiogram import Router, F, Bot
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from config import DEV_CHAT_ID
@@ -37,7 +37,12 @@ async def cmd_report(message: Message, state: FSMContext):
         "Отправьте ваше сообщение одним текстом."
     )
     
-    await message.answer(instruction)
+    # Создаем клавиатуру с кнопкой отмены
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Не отправлять", callback_data="report:cancel")]
+    ])
+    
+    await message.answer(instruction, reply_markup=cancel_kb)
     await state.set_state(ReportStates.waiting_report_text)
 
 @router.message(ReportStates.waiting_report_text)
@@ -87,3 +92,19 @@ async def process_report(message: Message, state: FSMContext, bot: Bot):
     
     await state.clear()
 
+@router.callback_query(F.data == "report:cancel")
+async def cb_report_cancel(call: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки 'Не отправлять репорт' - удаляет сообщение и снимает ожидание репорта"""
+    logger.info(f"[REPORT] ❌ Пользователь {call.from_user.id} отменил отправку репорта")
+    
+    # Сбрасываем состояние FSM
+    await state.clear()
+    
+    # Удаляем сообщение с инструкцией
+    try:
+        await call.message.delete()
+    except Exception as e:
+        logger.warning(f"[REPORT] ⚠️ Не удалось удалить сообщение: {e}")
+    
+    # Отвечаем на callback (убираем индикатор загрузки)
+    await call.answer("Отправка репорта отменена")
