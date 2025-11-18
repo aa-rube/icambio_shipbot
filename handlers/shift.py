@@ -57,6 +57,13 @@ async def cmd_online(message: Message):
     """Команда для начала смены"""
     logger.info(f"[SHIFT] 📍 Пользователь {message.from_user.id} использует команду /online")
     
+    # Проверяем, что пользователь - курьер
+    db = await get_db()
+    courier = await db.couriers.find_one({"tg_chat_id": message.chat.id})
+    if not courier:
+        logger.warning(f"[SHIFT] ⚠️ Пользователь {message.from_user.id} не является курьером, игнорируем команду /online")
+        return
+    
     is_on_shift, shift_started_at = await check_shift_status(message.chat.id)
     
     if is_on_shift and shift_started_at:
@@ -370,6 +377,14 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
 async def cmd_offline(message: Message, bot: Bot):
     """Команда для завершения смены"""
     logger.info(f"[SHIFT] 🛑 Пользователь {message.from_user.id} использует команду /offline")
+    
+    # Проверяем, что пользователь - курьер
+    db = await get_db()
+    courier = await db.couriers.find_one({"tg_chat_id": message.chat.id})
+    if not courier:
+        logger.warning(f"[SHIFT] ⚠️ Пользователь {message.from_user.id} не является курьером, игнорируем команду /offline")
+        return
+    
     await end_shift_logic(message.chat.id, message.from_user.id, bot, message)
 
 @router.callback_query(F.data == "shift:end")

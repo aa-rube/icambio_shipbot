@@ -8,18 +8,46 @@ router = Router()
 
 @router.message(F.text == "/start")
 @router.message(F.text == "start")
-@router.message(F.text == "/main")
-@router.message(F.text == "main")
 async def cmd_start(message: Message):
+    """Обработчик /start - определяет админ или курьер и вызывает соответствующий обработчик"""
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"User {message.from_user.id} started bot")
     
     db = await get_db()
+    
+    # Проверяем, является ли пользователь админом
+    from handlers.admin import is_super_admin
+    if await is_super_admin(message.from_user.id):
+        # Если админ - вызываем логику /admin
+        logger.info(f"[START] Пользователь {message.from_user.id} - админ, вызываем /admin")
+        from keyboards.admin_kb import admin_main_kb
+        await message.answer("🔧 Админ-панель", reply_markup=admin_main_kb())
+        return
+    
+    # Проверяем, является ли пользователь курьером
+    courier = await db.couriers.find_one({"tg_chat_id": message.chat.id})
+    if not courier:
+        logger.warning(f"[START] User {message.from_user.id} не найден ни как админ, ни как курьер, игнорируем /start")
+        return
+    
+    # Если курьер - вызываем логику /main
+    logger.info(f"[START] Пользователь {message.from_user.id} - курьер, вызываем /main")
+    await cmd_main(message)
+
+@router.message(F.text == "/main")
+@router.message(F.text == "main")
+async def cmd_main(message: Message):
+    """Обработчик /main - главное меню для курьера"""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"User {message.from_user.id} использует команду /main")
+    
+    db = await get_db()
     courier = await db.couriers.find_one({"tg_chat_id": message.chat.id})
     
     if not courier:
-        logger.warning(f"User {message.from_user.id} not found in couriers, ignoring /start")
+        logger.warning(f"User {message.from_user.id} not found in couriers, ignoring /main")
         return
     
     from db.models import Action

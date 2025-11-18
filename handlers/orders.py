@@ -80,6 +80,13 @@ async def cmd_orders(message: Message):
     user_id = message.from_user.id
     logger.info(f"[ORDERS] 📦 Команда /orders от пользователя {user_id} (chat_id: {chat_id})")
     
+    # Проверяем, что пользователь - курьер
+    db = await get_db()
+    courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+    if not courier:
+        logger.warning(f"[ORDERS] ⚠️ Пользователь {user_id} не является курьером, игнорируем команду /orders")
+        return
+    
     try:
         await show_active_orders(chat_id, message)
     except Exception as e:
@@ -703,6 +710,15 @@ async def cb_order_problem(call: CallbackQuery):
 @router.message(F.text == "/history_today")
 async def cmd_history_today(message: Message):
     db = await get_db()
+    
+    # Проверяем, что пользователь - курьер
+    courier = await db.couriers.find_one({"tg_chat_id": message.chat.id})
+    if not courier:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[ORDERS] ⚠️ Пользователь {message.from_user.id} не является курьером, игнорируем команду /history_today")
+        return
+    
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + "Z"
     
@@ -726,6 +742,15 @@ async def cmd_history_today(message: Message):
 
 @router.message(F.text == "/history_all")
 async def cmd_history_all(message: Message):
+    # Проверяем, что пользователь - курьер
+    db = await get_db()
+    courier = await db.couriers.find_one({"tg_chat_id": message.chat.id})
+    if not courier:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[ORDERS] ⚠️ Пользователь {message.from_user.id} не является курьером, игнорируем команду /history_all")
+        return
+    
     await show_history_page(message, 0)
 
 @router.callback_query(F.data.startswith("history:page:"))
