@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from typing import Optional
 from db.mongo import get_db
-from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb, active_orders_kb, order_edit_kb, courier_list_kb, all_deliveries_kb, all_orders_list_kb
+from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb, active_orders_kb, order_edit_kb, courier_list_kb, all_deliveries_kb, all_orders_list_kb, courier_transfer_kb
 from db.redis_client import get_redis
 from utils.url_shortener import shorten_url
 
@@ -1479,3 +1479,250 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
     else:
         # Возвращаем к списку заказов исходного курьера (первая страница)
         await _show_active_orders_page(call, original_courier_chat_id, page=0)
+
+@router.callback_query(F.data.startswith("admin:close_shift:"))
+async def cb_close_shift(call: CallbackQuery):
+    """Обработчик кнопки 'Закрыть смену курьера'"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    courier_chat_id = int(call.data.split(":")[2])
+    logger.info(f"[ADMIN] 🔴 Админ {call.from_user.id} закрывает смену курьера {courier_chat_id}")
+    
+    db = await get_db()
+    
+    # Проверяем наличие активных заказов
+    active_orders = await db.couriers_deliveries.find({
+        "courier_tg_chat_id": courier_chat_id,
+        "status": {"$in": ["waiting", "in_transit"]}
+    }).to_list(100)
+    
+    if active_orders:
+        # Если есть активные заказы - показываем список курьеров для передачи
+        all_couriers = await db.couriers.find().to_list(1000)
+        
+        # Исключаем текущего курьера из списка
+        couriers_for_transfer = [c for c in all_couriers if c.get("tg_chat_id") != courier_chat_id]
+        
+        # Сортируем: сначала онлайн, потом оффлайн, внутри по имени
+        couriers_for_transfer.sort(key=lambda x: (
+            0 if x.get("is_on_shift", False) else 1,  # Сначала онлайн (0), потом оффлайн (1)
+            x.get("name", "").lower()  # Внутри по имени
+        ))
+        
+        if not couriers_for_transfer:
+            await call.answer("❌ Нет других курьеров для передачи заказов", show_alert=True)
+            return
+        
+        text = (
+            f"🔴 Закрыть смену курьера\n\n"
+            f"У курьера есть активные заказы ({len(active_orders)}).\n"
+            f"Выберите курьера, на которого передать заказы:"
+        )
+        
+        await call.message.edit_text(text, reply_markup=courier_transfer_kb(couriers_for_transfer, courier_chat_id))
+        await call.answer()
+    else:
+        # Если нет активных заказов - сразу закрываем смену
+        await _close_shift_without_transfer(call, courier_chat_id)
+
+@router.callback_query(F.data.startswith("admin:transfer_orders:"))
+async def cb_transfer_orders(call: CallbackQuery, bot: Bot):
+    """Обработчик передачи заказов другому курьеру при закрытии смены"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    parts = call.data.split(":")
+    courier_to_close_chat_id = int(parts[2])
+    new_courier_chat_id = int(parts[3])
+    
+    logger.info(f"[ADMIN] 🔄 Админ {call.from_user.id} передает заказы от курьера {courier_to_close_chat_id} курьеру {new_courier_chat_id}")
+    
+    db = await get_db()
+    
+    # Получаем информацию о курьерах
+    old_courier = await db.couriers.find_one({"tg_chat_id": courier_to_close_chat_id})
+    new_courier = await db.couriers.find_one({"tg_chat_id": new_courier_chat_id})
+    
+    if not old_courier or not new_courier:
+        await call.answer("❌ Курьер не найден", show_alert=True)
+        return
+    
+    # Получаем активные заказы
+    active_orders = await db.couriers_deliveries.find({
+        "courier_tg_chat_id": courier_to_close_chat_id,
+        "status": {"$in": ["waiting", "in_transit"]}
+    }).to_list(100)
+    
+    if not active_orders:
+        await call.answer("❌ Нет активных заказов для передачи", show_alert=True)
+        return
+    
+    # Передаем заказы новому курьеру
+    from db.models import utcnow_iso
+    from utils.odoo import update_order_courier
+    
+    transferred_count = 0
+    for order in active_orders:
+        external_id = order.get("external_id")
+        try:
+            # Обновляем в БД
+            await db.couriers_deliveries.update_one(
+                {"external_id": external_id},
+                {
+                    "$set": {
+                        "courier_tg_chat_id": new_courier_chat_id,
+                        "assigned_to": new_courier["_id"],
+                        "updated_at": utcnow_iso()
+                    }
+                }
+            )
+            
+            # Обновляем в Odoo
+            try:
+                await update_order_courier(external_id, str(new_courier_chat_id))
+            except Exception as e:
+                logger.warning(f"[ADMIN] ⚠️ Не удалось обновить курьера заказа {external_id} в Odoo: {e}")
+            
+            transferred_count += 1
+        except Exception as e:
+            logger.error(f"[ADMIN] ❌ Ошибка передачи заказа {external_id}: {e}", exc_info=True)
+    
+    logger.info(f"[ADMIN] ✅ Передано {transferred_count} заказов от курьера {courier_to_close_chat_id} курьеру {new_courier_chat_id}")
+    
+    # Отправляем сообщение новому курьеру о переданных заказах
+    try:
+        from utils.order_format import format_order_text
+        from keyboards.orders_kb import new_order_kb, in_transit_kb
+        
+        for order in active_orders:
+            try:
+                text = format_order_text(order)
+                kb = new_order_kb(order["external_id"]) if order.get("status") == "waiting" else in_transit_kb(order["external_id"], order)
+                await bot.send_message(
+                    new_courier_chat_id,
+                    text,
+                    parse_mode="HTML",
+                    reply_markup=kb
+                )
+            except Exception as e:
+                logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение новому курьеру {new_courier_chat_id} о заказе {order.get('external_id')}: {e}")
+    except Exception as e:
+        logger.warning(f"[ADMIN] ⚠️ Ошибка отправки сообщений новому курьеру: {e}")
+    
+    # Показываем попап с подтверждением
+    await call.answer(f"✅ Заказы переданы курьеру {new_courier.get('name', 'Unknown')}", show_alert=True)
+    
+    # Закрываем смену
+    await _close_shift_final(call, bot, courier_to_close_chat_id)
+
+@router.callback_query(F.data.startswith("admin:close_shift_no_transfer:"))
+async def cb_close_shift_no_transfer(call: CallbackQuery, bot: Bot):
+    """Обработчик закрытия смены без передачи заказов"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(call.from_user.id):
+        await call.answer("❌ Доступ запрещен", show_alert=True)
+        return
+    
+    courier_chat_id = int(call.data.split(":")[2])
+    logger.info(f"[ADMIN] 🔴 Админ {call.from_user.id} закрывает смену курьера {courier_chat_id} без передачи заказов")
+    
+    await _close_shift_final(call, bot, courier_chat_id)
+
+async def _close_shift_final(call: CallbackQuery, bot: Bot, courier_chat_id: int):
+    """Финальное закрытие смены курьера"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    db = await get_db()
+    redis = get_redis()
+    
+    courier = await db.couriers.find_one({"tg_chat_id": courier_chat_id})
+    if not courier:
+        await call.answer("❌ Курьер не найден", show_alert=True)
+        return
+    
+    # Сохраняем время начала смены для подсчета заказов
+    shift_started_at = courier.get("shift_started_at")
+    current_shift_id = courier.get("current_shift_id")
+    user_id = courier_chat_id  # Используем chat_id как user_id
+    
+    # Подсчет заказов за смену
+    orders_count = 0
+    complete_orders_count = 0
+    
+    if shift_started_at:
+        try:
+            orders_count = await db.couriers_deliveries.count_documents({
+                "courier_tg_chat_id": courier_chat_id,
+                "created_at": {"$gte": shift_started_at}
+            })
+            complete_orders_count = await db.couriers_deliveries.count_documents({
+                "courier_tg_chat_id": courier_chat_id,
+                "status": "done",
+                "created_at": {"$gte": shift_started_at}
+            })
+        except Exception as e:
+            logger.warning(f"[ADMIN] ⚠️ Ошибка подсчета заказов за смену: {e}", exc_info=True)
+    
+    # Обновляем статус курьера
+    await db.couriers.update_one(
+        {"_id": courier["_id"]},
+        {"$set": {"is_on_shift": False}, "$unset": {"current_shift_id": "", "shift_started_at": ""}}
+    )
+    
+    # Удаляем данные из Redis
+    await redis.delete(f"courier:shift:{courier_chat_id}")
+    await redis.delete(f"courier:loc:{courier_chat_id}")
+    
+    # Записываем в историю
+    from db.models import Action, ShiftHistory
+    await Action.log(db, user_id, "shift_end")
+    await ShiftHistory.log(
+        db,
+        courier_chat_id,
+        "shift_ended",
+        shift_id=current_shift_id,
+        total_orders=orders_count,
+        complete_orders=complete_orders_count,
+        shift_started_at=shift_started_at
+    )
+    
+    # Обновление статуса в Odoo
+    try:
+        from utils.odoo import update_courier_status
+        await update_courier_status(str(courier_chat_id), is_online=False)
+    except Exception as e:
+        logger.warning(f"[ADMIN] ⚠️ Не удалось обновить статус курьера в Odoo: {e}")
+    
+    # Отправляем сообщение курьеру
+    try:
+        await bot.send_message(
+            courier_chat_id,
+            "🔴 Ваша смена завершена офис-менеджером.\n\nСпасибо за работу!"
+        )
+    except Exception as e:
+        logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение курьеру {courier_chat_id}: {e}")
+    
+    # Удаляем сообщение
+    try:
+        await call.message.delete()
+    except Exception as e:
+        logger.warning(f"[ADMIN] ⚠️ Не удалось удалить сообщение: {e}")
+    
+    logger.info(f"[ADMIN] ✅ Смена курьера {courier_chat_id} закрыта админом")
+
+async def _close_shift_without_transfer(call: CallbackQuery, courier_chat_id: int):
+    """Закрытие смены без передачи заказов (когда нет активных заказов)"""
+    bot = call.message.bot
+    await _close_shift_final(call, bot, courier_chat_id)

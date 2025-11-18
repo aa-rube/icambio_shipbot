@@ -120,6 +120,8 @@ def courier_location_kb(chat_id: int, has_route: bool = False) -> InlineKeyboard
     ])
     # Добавляем кнопку "Активные заказы"
     buttons.append([InlineKeyboardButton(text="📦 Активные заказы", callback_data=f"admin:active_orders:{chat_id}")])
+    # Добавляем кнопку "Закрыть смену курьера"
+    buttons.append([InlineKeyboardButton(text="🔴 Закрыть смену курьера", callback_data=f"admin:close_shift:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def courier_location_with_back_kb(chat_id: int, has_route: bool = False) -> InlineKeyboardMarkup:
@@ -131,6 +133,8 @@ def courier_location_with_back_kb(chat_id: int, has_route: bool = False) -> Inli
     ])
     # Добавляем кнопку "Активные заказы"
     buttons.append([InlineKeyboardButton(text="📦 Активные заказы", callback_data=f"admin:active_orders:{chat_id}")])
+    # Добавляем кнопку "Закрыть смену курьера"
+    buttons.append([InlineKeyboardButton(text="🔴 Закрыть смену курьера", callback_data=f"admin:close_shift:{chat_id}")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:back_from_couriers:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -193,6 +197,30 @@ def order_edit_kb(external_id: str, chat_id: int = None, from_all_orders: bool =
         buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin:active_orders:{chat_id}")])
     else:
         buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin:view_all_orders")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def courier_transfer_kb(couriers: list, courier_to_close_chat_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура со списком курьеров для передачи заказов при закрытии смены"""
+    buttons = []
+    # Первая кнопка - "Не передавать заказы"
+    buttons.append([InlineKeyboardButton(text="❌ Не передавать заказы", callback_data=f"admin:close_shift_no_transfer:{courier_to_close_chat_id}")])
+    
+    # Список курьеров
+    for courier in couriers:
+        name = courier.get("name", "Unknown")
+        courier_chat_id = courier.get("tg_chat_id")
+        is_on_shift = courier.get("is_on_shift", False)
+        
+        # Индикатор онлайн/оффлайн
+        status_icon = "🟢" if is_on_shift else "🔴"
+        
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{status_icon} {name}",
+                callback_data=f"admin:transfer_orders:{courier_to_close_chat_id}:{courier_chat_id}"
+            )
+        ])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
