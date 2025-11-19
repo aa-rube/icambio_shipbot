@@ -651,8 +651,12 @@ async def cb_order_done(call: CallbackQuery):
     # Проверка: тестовые заказы должны пройти проверку оплаты перед завершением
     is_test = is_test_order(external_id)
     
+    # Проверяем наличие client_ip - для таких заказов разрешаем завершение даже при NOT_PAID
+    has_client_ip = bool(order.get("client_ip"))
+    
     # Если статус оплаты "не оплачен", не позволяем завершить заказ
-    if order.get("payment_status") == "NOT_PAID":
+    # Исключение: заказы с client_ip могут быть завершены без проверки оплаты
+    if order.get("payment_status") == "NOT_PAID" and not has_client_ip:
         if is_test:
             logger.warning(f"[ORDERS] ⚠️ Тестовый заказ {external_id} - оплата не подтверждена, нужно проверить оплату")
             await call.answer("Сначала проверьте оплату (тестовый заказ)", show_alert=True)

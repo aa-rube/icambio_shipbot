@@ -52,7 +52,9 @@ def format_order_text(order: dict) -> str:
     
     priority_emoji = "🔴" if order.get("priority", 0) >= 5 else "🟡" if order.get("priority", 0) >= 3 else "⚪"
     
-    text = f"{status_emoji.get(order.get('status', 'waiting'), '⏳')} Статус: {status_text.get(order.get('status', 'waiting'), 'Ожидает')}\n\n"
+    # Номер заказа в самом начале
+    text = f"📦 Заказ: {order.get('external_id', '—')}\n\n"
+    text += f"{status_emoji.get(order.get('status', 'waiting'), '⏳')} Статус: {status_text.get(order.get('status', 'waiting'), 'Ожидает')}\n\n"
     text += f"<code>{order.get('address', '—')}</code>\n\n"
     
     if order.get("map_url"):

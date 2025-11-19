@@ -72,7 +72,7 @@ async def handle_edited_location(edited_message: Message):
         f"{last_location['lat']},{last_location['lon']}"
     )
     
-    logger.debug(f"Live location updated from edited_message for courier {chat_id}, shift {shift_id}")
+    logger.debug(f"🔍 📍 Live location updated from edited_message for courier {chat_id}, shift {shift_id}")
 
 @router.message(F.location)
 async def handle_location_update(message: Message):
