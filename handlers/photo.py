@@ -56,7 +56,7 @@ async def handle_photo(message: Message, bot: Bot):
         await message.answer("Фото не ожидается. Сначала нажми «Заказ выполнен».")
         return
 
-    # Получаем заказ ДО завершения, чтобы проверить статус оплаты
+    # Получаем заказ ДО завершения, чтобы проверить условия
     order = await db.couriers_deliveries.find_one({"external_id": external_id})
     if not order:
         logger.warning(f"[PHOTO] ⚠️ Заказ {external_id} не найден")
@@ -64,9 +64,18 @@ async def handle_photo(message: Message, bot: Bot):
         await redis.delete(f"courier:photo_wait:{chat_id}")
         return
 
+    # Фото для закрытия заказа требуется ТОЛЬКО для наличных заказов без client_ip
+    is_cash_payment = order.get("is_cash_payment", False)
+    has_client_ip = bool(order.get("client_ip"))
+    
+    if not (is_cash_payment and not has_client_ip):
+        logger.warning(f"[PHOTO] ⚠️ Фото не требуется для закрытия заказа {external_id} (is_cash_payment={is_cash_payment}, has_client_ip={has_client_ip})")
+        await message.answer("❌ Фото не требуется для закрытия этого заказа. Заказ должен быть закрыт автоматически.")
+        await redis.delete(f"courier:photo_wait:{chat_id}")
+        return
+
     # Проверяем статус оплаты перед завершением заказа
     # Исключение: заказы с client_ip могут быть завершены без проверки оплаты
-    has_client_ip = bool(order.get("client_ip"))
     payment_status = order.get("payment_status")
     
     if payment_status == "NOT_PAID" and not has_client_ip:
@@ -78,12 +87,20 @@ async def handle_photo(message: Message, bot: Bot):
     photo = message.photo[-1]  # largest size
     file_id = photo.file_id
 
+    # Для наличных заказов без client_ip устанавливаем статус оплаты в PAID при закрытии
+    update_data = {
+        "$set": {"status": "done", "updated_at": utcnow_iso()},
+        "$push": {"photos": {"file_id": file_id, "uploaded_at": utcnow_iso()}}
+    }
+    
+    # Если это наличный заказ без client_ip, устанавливаем payment_status в PAID
+    if is_cash_payment and not has_client_ip:
+        update_data["$set"]["payment_status"] = "PAID"
+        logger.debug(f"[PHOTO] 💰 Установка payment_status=PAID для наличного заказа {external_id}")
+
     await db.couriers_deliveries.update_one(
         {"external_id": external_id},
-        {
-            "$set": {"status": "done", "updated_at": utcnow_iso()},
-            "$push": {"photos": {"file_id": file_id, "uploaded_at": utcnow_iso()}}
-        }
+        update_data
     )
     await redis.delete(f"courier:photo_wait:{chat_id}")
 

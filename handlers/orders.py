@@ -382,8 +382,29 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     if is_test:
         logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - автоматически устанавливаем оплату PAID")
     
-    # Обновляем статус оплаты и статус заказа
-    logger.debug(f"[ORDERS] 💾 Обновление статуса заказа {external_id} на 'done' с оплатой 'PAID'")
+    # Проверяем наличие client_ip
+    has_client_ip = bool(order.get("client_ip"))
+    
+    # Удаляем флаг ожидания фотографий оплаты
+    logger.debug(f"[ORDERS] 🗑️ Удаление флага ожидания фото оплаты для chat_id {call.message.chat.id}")
+    await redis.delete(f"courier:payment_photo_wait:{call.message.chat.id}")
+    
+    # Для наличных заказов без client_ip требуется фото доставки перед закрытием
+    if not has_client_ip:
+        # Просим фото подтверждения доставки
+        logger.debug(f"[ORDERS] ⏳ Установка флага ожидания фото доставки для chat_id {call.message.chat.id}")
+        await redis.setex(f"courier:photo_wait:{call.message.chat.id}", PHOTO_WAIT_TTL, external_id)
+        
+        from db.models import Action
+        await Action.log(db, call.from_user.id, "payment_accepted", order_id=external_id, details={"waiting_delivery_photo": True})
+        logger.info(f"[ORDERS] 💰 Оплата принята для заказа {external_id}, ожидается фото доставки")
+        
+        await call.message.answer("📸 Пришли фото подтверждение доставки (чек или доставка)")
+        await call.answer()
+        return
+    
+    # Для наличных заказов с client_ip закрываем сразу без фото
+    logger.debug(f"[ORDERS] 💾 Закрытие заказа {external_id} после оплаты наличными (с client_ip)")
     await db.couriers_deliveries.update_one(
         {"external_id": external_id},
         {
@@ -394,13 +415,9 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
             }
         }
     )
-      
-    # Удаляем флаг ожидания фотографий оплаты
-    logger.debug(f"[ORDERS] 🗑️ Удаление флага ожидания фото оплаты для chat_id {call.message.chat.id}")
-    await redis.delete(f"courier:payment_photo_wait:{call.message.chat.id}")
     
     # Получаем обновленный заказ для webhook
-    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    updated_order = await db.couriers_deliveries.find_one({"external_id": external_id})
     
     from db.models import Action
     await Action.log(db, call.from_user.id, "order_completed", order_id=external_id, details={"after_payment": True})
@@ -409,7 +426,7 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     # Отправка webhook только для реальных заказов (не тестовых)
     if not is_test:
         from utils.webhooks import send_webhook, prepare_order_data
-        order_data = await prepare_order_data(db, order)
+        order_data = await prepare_order_data(db, updated_order)
         webhook_data = {
             **order_data,
             "timestamp": utcnow_iso()
@@ -624,7 +641,7 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
     logger.info(f"[ORDERS] ✅ Статус оплаты проверен для заказа {external_id}: {new_payment_status}")
 
 @router.callback_query(F.data.startswith("order:done:"))
-async def cb_order_done(call: CallbackQuery):
+async def cb_order_done(call: CallbackQuery, bot: Bot):
     import logging
     logger = logging.getLogger(__name__)
     external_id = call.data.split(":", 2)[2]
@@ -665,16 +682,69 @@ async def cb_order_done(call: CallbackQuery):
             await call.answer("Сначала проверьте оплату", show_alert=True)
         return
     
-    redis = get_redis()
-    logger.debug(f"[ORDERS] ⏳ Установка флага ожидания фото для chat_id {call.message.chat.id}")
-    await redis.setex(f"courier:photo_wait:{call.message.chat.id}", PHOTO_WAIT_TTL, external_id)
+    # Проверяем, требуется ли фото для закрытия заказа
+    # Фото требуется ТОЛЬКО для наличных заказов без client_ip
+    is_cash_payment = order.get("is_cash_payment", False)
+    requires_photo = is_cash_payment and not has_client_ip
     
-    from db.models import Action
-    await Action.log(db, call.from_user.id, "order_completed", order_id=external_id)
-    logger.debug(f"[ORDERS] 📝 Действие 'order_completed' залогировано для заказа {external_id}")
-    
-    await call.message.answer("📸 Пришли фото подтверждение (чек или доставка)")
-    await call.answer()
+    if requires_photo:
+        # Для наличных заказов без client_ip просим фото подтверждения доставки
+        redis = get_redis()
+        logger.debug(f"[ORDERS] ⏳ Установка флага ожидания фото для chat_id {call.message.chat.id}")
+        await redis.setex(f"courier:photo_wait:{call.message.chat.id}", PHOTO_WAIT_TTL, external_id)
+        
+        from db.models import Action
+        await Action.log(db, call.from_user.id, "order_completed", order_id=external_id)
+        logger.debug(f"[ORDERS] 📝 Действие 'order_completed' залогировано для заказа {external_id}")
+        
+        await call.message.answer("📸 Пришли фото подтверждение (чек или доставка)")
+        await call.answer()
+    else:
+        # Для всех остальных случаев закрываем заказ сразу без фото
+        from db.models import Action
+        from utils.webhooks import send_webhook, prepare_order_data
+        
+        logger.debug(f"[ORDERS] 💾 Закрытие заказа {external_id} без фото")
+        await db.couriers_deliveries.update_one(
+            {"external_id": external_id},
+            {
+                "$set": {
+                    "status": "done",
+                    "updated_at": utcnow_iso()
+                }
+            }
+        )
+        
+        # Получаем обновленный заказ для webhook
+        updated_order = await db.couriers_deliveries.find_one({"external_id": external_id})
+        
+        await Action.log(db, call.from_user.id, "order_completed", order_id=external_id, details={"no_photo": True})
+        logger.info(f"[ORDERS] ✅ Пользователь {call.from_user.id} завершил заказ {external_id} без фото")
+        
+        # Отправка webhook только для реальных заказов (не тестовых)
+        if not is_test:
+            order_data = await prepare_order_data(db, updated_order)
+            webhook_data = {
+                **order_data,
+                "timestamp": utcnow_iso()
+            }
+            await send_webhook("order_completed", webhook_data)
+        else:
+            logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
+        
+        await call.message.answer("✅ Заказ выполнен.")
+        await call.answer()
+        
+        # Уведомление менеджера только для реальных заказов (не тестовых)
+        if not is_test:
+            courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
+            if courier:
+                await notify_manager(bot, courier, f"📦 Курьер {courier['name']} завершил заказ {external_id}")
+        else:
+            logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - уведомление менеджеру не отправляется")
+        
+        # Показываем список активных заказов (waiting и in_transit)
+        await show_active_orders(call.message.chat.id, call.message)
 
 @router.callback_query(F.data.startswith("order:problem:"))
 async def cb_order_problem(call: CallbackQuery):
