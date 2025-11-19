@@ -56,6 +56,25 @@ async def handle_photo(message: Message, bot: Bot):
         await message.answer("Фото не ожидается. Сначала нажми «Заказ выполнен».")
         return
 
+    # Получаем заказ ДО завершения, чтобы проверить статус оплаты
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    if not order:
+        logger.warning(f"[PHOTO] ⚠️ Заказ {external_id} не найден")
+        await message.answer("Заказ не найден")
+        await redis.delete(f"courier:photo_wait:{chat_id}")
+        return
+
+    # Проверяем статус оплаты перед завершением заказа
+    # Исключение: заказы с client_ip могут быть завершены без проверки оплаты
+    has_client_ip = bool(order.get("client_ip"))
+    payment_status = order.get("payment_status")
+    
+    if payment_status == "NOT_PAID" and not has_client_ip:
+        logger.warning(f"[PHOTO] ⚠️ Попытка завершить заказ {external_id} без оплаты")
+        await message.answer("❌ Заказ не оплачен. Свяжитесь с менеджером для уточнения.")
+        await redis.delete(f"courier:photo_wait:{chat_id}")
+        return
+
     photo = message.photo[-1]  # largest size
     file_id = photo.file_id
 
