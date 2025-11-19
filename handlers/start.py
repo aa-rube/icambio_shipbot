@@ -2,7 +2,8 @@ from aiogram import Router, F
 from aiogram.types import Message
 from keyboards.main_menu import main_menu
 from db.mongo import get_db
-from datetime import datetime, timezone
+from config import TIMEZONE
+from datetime import datetime
 
 router = Router()
 
@@ -54,9 +55,9 @@ async def cmd_main(message: Message):
     await Action.log(db, message.from_user.id, "user_start")
 
     # stats
-    now = datetime.now(timezone.utc)
-    start_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
-    start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    now = datetime.now(TIMEZONE)
+    start_month = datetime(now.year, now.month, 1, tzinfo=TIMEZONE)
+    start_today = datetime(now.year, now.month, now.day, tzinfo=TIMEZONE)
 
     monthly = await db.orders.count_documents({
         "assigned_to": courier["_id"],

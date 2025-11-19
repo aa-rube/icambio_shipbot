@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
+from config import TIMEZONE
 
 # --- Pydantic schemas for FastAPI input ---
 class IncomingOrder(BaseModel):
@@ -32,7 +33,9 @@ class UpdateOrder(BaseModel):
 
 # Helpers
 def utcnow_iso() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    """Возвращает текущее время в таймзоне Buenos Aires в ISO формате"""
+    now = datetime.now(TIMEZONE)
+    return now.replace(microsecond=0).isoformat()
 
 ORDER_STATUSES = ("waiting", "in_transit", "done", "cancelled")
 PAYMENT_STATUSES = ("NOT_PAID", "PAID", "REFUND")
@@ -107,8 +110,8 @@ class ShiftHistory:
             complete_orders: Количество завершенных заказов
             shift_started_at: Время начала смены (ISO формат)
         """
-        now = datetime.utcnow()
-        timestamp = now.replace(microsecond=0).isoformat() + "Z"
+        now = datetime.now(TIMEZONE)
+        timestamp = now.replace(microsecond=0).isoformat()
         time_readable = now.strftime("%d.%m.%Y %H:%M")
         
         return {

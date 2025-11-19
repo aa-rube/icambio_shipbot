@@ -10,7 +10,7 @@ from db.models import IncomingOrder, UpdateOrder, utcnow_iso
 from keyboards.orders_kb import new_order_kb
 from utils.logger import setup_logging
 from utils.order_format import format_order_text
-from config import BOT_TOKEN, API_HOST, API_PORT
+from config import BOT_TOKEN, API_HOST, API_PORT, TIMEZONE
 
 app = FastAPI(title="Courier Local API")
 bot = Bot(BOT_TOKEN)
@@ -226,7 +226,7 @@ async def route_redirect(key: str):
     но последняя точка должна быть не старше 24 часов.
     """
     import logging
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
     from db.redis_client import get_redis
     
     logger = logging.getLogger(__name__)
@@ -258,8 +258,18 @@ async def route_redirect(key: str):
         raise HTTPException(status_code=500, detail="Invalid redirect data")
     
     db = await get_db()
-    now = datetime.now(timezone.utc)
-    time_72h_ago = datetime.fromisoformat(time_72h_ago_str.replace('Z', '+00:00')) if time_72h_ago_str else now - timedelta(hours=72)
+    now = datetime.now(TIMEZONE)
+    if time_72h_ago_str:
+        if time_72h_ago_str.endswith('Z'):
+            time_72h_ago = datetime.fromisoformat(time_72h_ago_str.replace('Z', '+00:00'))
+        else:
+            time_72h_ago = datetime.fromisoformat(time_72h_ago_str)
+        if time_72h_ago.tzinfo is None:
+            time_72h_ago = time_72h_ago.replace(tzinfo=TIMEZONE)
+        elif time_72h_ago.tzinfo != TIMEZONE:
+            time_72h_ago = time_72h_ago.astimezone(TIMEZONE)
+    else:
+        time_72h_ago = now - timedelta(hours=72)
     time_24h_ago = now - timedelta(hours=24)
     
     # Получаем все локации за последние 72 часа, отсортированные по timestamp
@@ -277,7 +287,7 @@ async def route_redirect(key: str):
     
     # Проверяем последнюю локацию - она должна быть не старше 24 часов
     last_location = locations[-1]
-    last_location_time = datetime.fromtimestamp(last_location.get("timestamp_ns", 0) / 1e9, tz=timezone.utc)
+    last_location_time = datetime.fromtimestamp(last_location.get("timestamp_ns", 0) / 1e9, tz=TIMEZONE)
     
     if last_location_time < time_24h_ago:
         # Если последняя локация старше 24 часов, ищем последнюю локацию за 24 часа

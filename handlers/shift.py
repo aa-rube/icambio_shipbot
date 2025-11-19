@@ -3,9 +3,9 @@ from aiogram.types import Message, CallbackQuery
 from keyboards.main_menu import main_menu
 from db.mongo import get_db
 from db.redis_client import get_redis
-from config import SHIFT_TTL, LOC_TTL, MANAGER_CHAT_ID
+from config import SHIFT_TTL, LOC_TTL, MANAGER_CHAT_ID, TIMEZONE
 from bson import ObjectId
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Tuple, Optional
 import logging
 
@@ -27,7 +27,15 @@ def format_shift_start_time(shift_started_at: str) -> str:
     """Форматирует дату и время начала смены для отображения"""
     try:
         # Парсим ISO формат даты
-        dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
+        if shift_started_at.endswith('Z'):
+            dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
+        else:
+            dt = datetime.fromisoformat(shift_started_at)
+        # Конвертируем в таймзону Buenos Aires если нужно
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=TIMEZONE)
+        elif dt.tzinfo != TIMEZONE:
+            dt = dt.astimezone(TIMEZONE)
         # Форматируем в читаемый формат: ДД.ММ.ГГГГ ЧЧ:ММ
         return dt.strftime("%d.%m.%Y %H:%M")
     except Exception as e:
@@ -119,7 +127,7 @@ async def handle_location(message: Message, bot: Bot):
 
     try:
         loc = message.location
-        now = datetime.now(timezone.utc)
+        now = datetime.now(TIMEZONE)
         date_key = now.strftime("%d-%m-%Y")
         shift_id = str(ObjectId())
         

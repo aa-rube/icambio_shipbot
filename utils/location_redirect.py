@@ -3,7 +3,7 @@ import json
 from typing import Optional, Dict, Any
 from db.redis_client import get_redis
 from db.mongo import get_db
-from config import LOCATION_REDIRECT_TTL, API_BASE_URL
+from config import LOCATION_REDIRECT_TTL, API_BASE_URL, TIMEZONE
 
 async def generate_location_redirect_key(chat_id: int, msg_id: int) -> str:
     """
@@ -132,14 +132,14 @@ async def generate_route_redirect_key(chat_id: int, msg_id: int, date: str = Non
     Raises:
         ValueError: Если маршрут не найден
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
     
     # Генерируем случайную часть ключа
     random_part = secrets.token_urlsafe(16)
     key = f"{random_part}-{msg_id}"
     
     # Ищем локации за последние 72 часа
-    now = datetime.now(timezone.utc)
+    now = datetime.now(TIMEZONE)
     time_72h_ago = now - timedelta(hours=72)
     
     db = await get_db()

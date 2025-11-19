@@ -2,7 +2,8 @@ from aiogram import Router, F
 from aiogram.types import Message
 from db.mongo import get_db
 from db.redis_client import get_redis
-from datetime import datetime, timezone
+from config import TIMEZONE
+from datetime import datetime
 from bson import ObjectId
 import logging
 
@@ -37,7 +38,7 @@ async def handle_edited_location(edited_message: Message):
         logger.warning(f"No shift_id for courier {chat_id}")
         return
     
-    now = datetime.now(timezone.utc)
+    now = datetime.now(TIMEZONE)
     date_key = now.strftime("%d-%m-%Y")
     
     location_doc = {
@@ -98,7 +99,7 @@ async def handle_location_update(message: Message):
             logger.warning(f"No shift_id for courier {chat_id}")
             return
         
-        now = datetime.now(timezone.utc)
+        now = datetime.now(TIMEZONE)
         date_key = now.strftime("%d-%m-%Y")
         
         location_doc = {
@@ -141,7 +142,7 @@ async def handle_location_update(message: Message):
             logger.warning(f"No shift_id for courier {chat_id}")
             return
         
-        now = datetime.now(timezone.utc)
+        now = datetime.now(TIMEZONE)
         date_key = now.strftime("%d-%m-%Y")
         
         location_doc = {

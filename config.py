@@ -1,7 +1,11 @@
 import os
 from dotenv import load_dotenv
+from zoneinfo import ZoneInfo
 
 load_dotenv()
+
+# Timezone
+TIMEZONE = ZoneInfo("America/Argentina/Buenos_Aires")
 
 # Odoo
 ODOO_URL = os.getenv("ODOO_URL", "http://localhost:8069/jsonrpc")

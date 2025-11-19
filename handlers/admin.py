@@ -7,6 +7,7 @@ from db.mongo import get_db
 from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb, active_orders_kb, order_edit_kb, courier_list_kb, all_deliveries_kb, all_orders_list_kb, courier_transfer_kb
 from db.redis_client import get_redis
 from utils.url_shortener import shorten_url
+from config import TIMEZONE
 
 router = Router()
 
@@ -97,9 +98,9 @@ async def cb_back_from_couriers(call: CallbackQuery, state: FSMContext):
     
     # Проверяем, есть ли маршрут для этого курьера
     try:
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
         db = await get_db()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(TIMEZONE)
         time_72h_ago = now - timedelta(hours=72)
         
         # Проверяем наличие локаций за последние 72 часа
@@ -518,7 +519,7 @@ async def cb_on_shift_couriers(call: CallbackQuery):
         return
     
     db = await get_db()
-    from datetime import datetime, timezone
+    from datetime import datetime
     
     # Получаем всех курьеров на смене
     logger.debug(f"[ADMIN] 🔍 Поиск курьеров на смене")
@@ -539,8 +540,8 @@ async def cb_on_shift_couriers(call: CallbackQuery):
     await call.message.delete()
     
     # Для каждого курьера формируем отдельное сообщение
-    now = datetime.now(timezone.utc)
-    start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    now = datetime.now(TIMEZONE)
+    start_today = datetime(now.year, now.month, now.day, tzinfo=TIMEZONE)
     
     for idx, courier in enumerate(couriers):
         chat_id = courier.get("tg_chat_id")
@@ -583,7 +584,14 @@ async def cb_on_shift_couriers(call: CallbackQuery):
         shift_time_text = "Не указано"
         if shift_started_at:
             try:
-                shift_dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
+                if shift_started_at.endswith('Z'):
+                    shift_dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
+                else:
+                    shift_dt = datetime.fromisoformat(shift_started_at)
+                if shift_dt.tzinfo is None:
+                    shift_dt = shift_dt.replace(tzinfo=TIMEZONE)
+                elif shift_dt.tzinfo != TIMEZONE:
+                    shift_dt = shift_dt.astimezone(TIMEZONE)
                 months_ru = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
                 month_ru = months_ru[shift_dt.month - 1]
                 shift_time_text = f"{shift_dt.day} {month_ru}. {shift_dt.strftime('%H:%M')}"
@@ -700,7 +708,7 @@ async def cb_show_location(call: CallbackQuery):
 async def cb_show_route(call: CallbackQuery):
     """Обработчик кнопки 'Маршрут сегодня' - показывает сообщение с прямой ссылкой на маршрут в Google Maps"""
     import logging
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
     logger = logging.getLogger(__name__)
     
     if not await is_super_admin(call.from_user.id):
@@ -711,7 +719,7 @@ async def cb_show_route(call: CallbackQuery):
     
     try:
         db = await get_db()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(TIMEZONE)
         time_72h_ago = now - timedelta(hours=72)
         time_24h_ago = now - timedelta(hours=24)
         
@@ -729,7 +737,7 @@ async def cb_show_route(call: CallbackQuery):
         
         # Проверяем последнюю локацию - она должна быть не старше 24 часов
         last_location = locations[-1]
-        last_location_time = datetime.fromtimestamp(last_location.get("timestamp_ns", 0) / 1e9, tz=timezone.utc)
+        last_location_time = datetime.fromtimestamp(last_location.get("timestamp_ns", 0) / 1e9, tz=TIMEZONE)
         
         if last_location_time < time_24h_ago:
             # Если последняя локация старше 24 часов, ищем последнюю локацию за 24 часа
@@ -824,8 +832,8 @@ async def cb_back_to_courier(call: CallbackQuery):
         username = courier.get("username")
         username_text = f"@{username}" if username else ""
         
-        now = datetime.now(timezone.utc)
-        start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+        now = datetime.now(TIMEZONE)
+        start_today = datetime(now.year, now.month, now.day, tzinfo=TIMEZONE)
         
         total_today = await db.couriers_deliveries.count_documents({
             "courier_tg_chat_id": chat_id,
@@ -859,7 +867,14 @@ async def cb_back_to_courier(call: CallbackQuery):
         shift_time_text = "Не указано"
         if shift_started_at:
             try:
-                shift_dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
+                if shift_started_at.endswith('Z'):
+                    shift_dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
+                else:
+                    shift_dt = datetime.fromisoformat(shift_started_at)
+                if shift_dt.tzinfo is None:
+                    shift_dt = shift_dt.replace(tzinfo=TIMEZONE)
+                elif shift_dt.tzinfo != TIMEZONE:
+                    shift_dt = shift_dt.astimezone(TIMEZONE)
                 months_ru = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
                 month_ru = months_ru[shift_dt.month - 1]
                 shift_time_text = f"{shift_dt.day} {month_ru}. {shift_dt.strftime('%H:%M')}"
@@ -983,12 +998,12 @@ async def cb_all_deliveries(call: CallbackQuery):
     logger.info(f"[ADMIN] 📦 Админ {call.from_user.id} запрашивает статистику всех доставок")
     
     db = await get_db()
-    from datetime import datetime, timezone
+    from datetime import datetime
     
     # Получаем текущую дату (начало и конец дня)
-    now = datetime.now(timezone.utc)
-    start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-    end_today = datetime(now.year, now.month, now.day, 23, 59, 59, tzinfo=timezone.utc)
+    now = datetime.now(TIMEZONE)
+    start_today = datetime(now.year, now.month, now.day, tzinfo=TIMEZONE)
+    end_today = datetime(now.year, now.month, now.day, 23, 59, 59, tzinfo=TIMEZONE)
     
     # Всего заказов в ожидании (waiting)
     waiting_count = await db.couriers_deliveries.count_documents({"status": "waiting"})

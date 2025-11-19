@@ -7,9 +7,9 @@ from keyboards.main_menu import main_menu
 from utils.notifications import notify_manager
 from utils.order_format import format_order_text
 from utils.test_orders import is_test_order
-from config import ORDER_LOCK_TTL, PHOTO_WAIT_TTL
+from config import ORDER_LOCK_TTL, PHOTO_WAIT_TTL, TIMEZONE
 from db.models import utcnow_iso
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, Tuple
 
 router = Router()
@@ -719,8 +719,8 @@ async def cmd_history_today(message: Message):
         logger.warning(f"[ORDERS] ⚠️ Пользователь {message.from_user.id} не является курьером, игнорируем команду /history_today")
         return
     
-    now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + "Z"
+    now = datetime.now(TIMEZONE)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     
     cursor = db.couriers_deliveries.find({
         "courier_tg_chat_id": message.chat.id,
@@ -761,8 +761,8 @@ async def cb_history_page(call: CallbackQuery):
 
 async def show_history_page(message: Message, page: int):
     db = await get_db()
-    now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + "Z"
+    now = datetime.now(TIMEZONE)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     
     skip = page * 30
     cursor = db.couriers_deliveries.find({
