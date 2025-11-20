@@ -10,6 +10,8 @@ from db.models import IncomingOrder, UpdateOrder, utcnow_iso, get_status_history
 from keyboards.orders_kb import new_order_kb
 from utils.logger import setup_logging
 from utils.order_format import format_order_text
+from utils.notifications import notify_manager
+from utils.test_orders import is_test_order
 from config import BOT_TOKEN, API_HOST, API_PORT, TIMEZONE
 
 app = FastAPI(title="Courier Local API")
@@ -186,6 +188,17 @@ async def create_order(payload: IncomingOrder, request: Request):
             pass
     else:
         logger.info(f"[API] ⏸️ Курьер {courier['tg_chat_id']} не на смене, уведомление пропущено")
+
+    # Уведомление менеджеру о назначении заказа на курьера (только для реальных заказов)
+    is_test = is_test_order(payload.external_id)
+    if not is_test:
+        try:
+            await notify_manager(bot, courier, f"📦 Заказ {payload.external_id} назначен на курьера {courier.get('name', 'Неизвестный')}")
+            logger.info(f"[API] ✅ Менеджер уведомлен о назначении заказа {payload.external_id} на курьера {courier.get('name')}")
+        except Exception as e:
+            logger.error(f"[API] ❌ Ошибка уведомления менеджера о назначении заказа: {e}", exc_info=True)
+    else:
+        logger.info(f"[API] 🧪 Тестовый заказ {payload.external_id} - уведомление менеджеру не отправляется")
 
     logger.info(f"[API] ✅ Создание заказа завершено: external_id={payload.external_id}, order_id={order_doc['_id']}")
     return JSONResponse({"ok": True, "order_id": str(order_doc["_id"]), "external_id": payload.external_id})
