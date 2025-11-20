@@ -278,6 +278,14 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
     else:
         logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
     
+    # Уведомление менеджера только для реальных заказов (не тестовых)
+    if not is_test:
+        courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
+        if courier:
+            await notify_manager(bot, courier, f"🚚 Курьер {courier['name']} принял заказ {external_id} (в пути)")
+    else:
+        logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - уведомление менеджеру не отправляется")
+    
     await call.message.edit_text(format_order_text(order), parse_mode="HTML", reply_markup=in_transit_kb(external_id, order))
     await call.answer("Статус: в пути")
 
