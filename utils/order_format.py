@@ -57,8 +57,16 @@ def format_order_text(order: dict) -> str:
     text += f"{status_emoji.get(order.get('status', 'waiting'), '⏳')} Статус: {status_text.get(order.get('status', 'waiting'), 'Ожидает')}\n\n"
     text += f"<code>{order.get('address', '—')}</code>\n\n"
     
-    if order.get("map_url"):
-        text += f"🗺 <a href='{order['map_url']}'>Карта</a>\n\n"
+    # Проверяем наличие и валидность ссылки на карту
+    map_url = order.get("map_url")
+    if map_url and map_url.strip():  # Проверяем, что URL не пустой и не состоит из пробелов
+        # Используем двойные кавычки для href, чтобы избежать проблем с одинарными кавычками в URL
+        # Экранируем двойные кавычки в URL, если они есть
+        escaped_url = map_url.strip().replace('"', '&quot;')
+        text += f'🗺 <a href="{escaped_url}">Карта</a>\n\n'
+    else:
+        # Если ссылки нет, показываем текст
+        text += "🗺 Нет ссылки googlemaps\n\n"
     
     # Используем маппинг для статуса оплаты
     payment_status = order.get('payment_status', 'NOT_PAID')
