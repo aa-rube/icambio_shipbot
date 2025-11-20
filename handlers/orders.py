@@ -2,7 +2,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from db.mongo import get_db
 from db.redis_client import get_redis
-from keyboards.orders_kb import new_order_kb, in_transit_kb
+from keyboards.orders_kb import new_order_kb, in_transit_kb, problem_only_kb
 from keyboards.main_menu import main_menu
 from utils.notifications import notify_manager
 from utils.order_format import format_order_text
@@ -735,6 +735,16 @@ async def cb_order_done(call: CallbackQuery, bot: Bot):
         await call.message.answer("✅ Заказ выполнен.")
         await call.answer()
         
+        # Для заказов с client_ip редактируем сообщение, удаляя кнопку "Завершить Заказ"
+        # и оставляя только "Проблема с заказом"
+        if has_client_ip:
+            try:
+                text = format_order_text(updated_order)
+                await call.message.edit_text(text, parse_mode="HTML", reply_markup=problem_only_kb(external_id))
+                logger.info(f"[ORDERS] ✅ Сообщение отредактировано для заказа {external_id} с client_ip - удалена кнопка 'Завершить Заказ'")
+            except Exception as e:
+                logger.warning(f"[ORDERS] ⚠️ Не удалось отредактировать сообщение для заказа {external_id}: {e}")
+        
         # Уведомление менеджера только для реальных заказов (не тестовых)
         if not is_test:
             courier = await db.couriers.find_one({"tg_chat_id": call.message.chat.id})
@@ -744,7 +754,9 @@ async def cb_order_done(call: CallbackQuery, bot: Bot):
             logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - уведомление менеджеру не отправляется")
         
         # Показываем список активных заказов (waiting и in_transit)
-        await show_active_orders(call.message.chat.id, call.message)
+        # Только если это не заказ с client_ip (для них уже отредактировано сообщение)
+        if not has_client_ip:
+            await show_active_orders(call.message.chat.id, call.message)
 
 @router.callback_query(F.data.startswith("order:problem:"))
 async def cb_order_problem(call: CallbackQuery):

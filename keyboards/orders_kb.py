@@ -85,3 +85,12 @@ def in_transit_kb(external_id: str, order: dict = None):
     b.button(text="⚠ Проблема с заказом", callback_data=f"order:problem:{external_id}")
     b.adjust(2)
     return b.as_markup()
+
+def problem_only_kb(external_id: str):
+    """
+    Создает клавиатуру только с кнопкой "Проблема с заказом".
+    Используется для заказов с client_ip после завершения заказа.
+    """
+    b = InlineKeyboardBuilder()
+    b.button(text="⚠ Проблема с заказом", callback_data=f"order:problem:{external_id}")
+    return b.as_markup()
