@@ -8,7 +8,7 @@ from utils.notifications import notify_manager
 from utils.order_format import format_order_text
 from utils.test_orders import is_test_order
 from config import ORDER_LOCK_TTL, PHOTO_WAIT_TTL, TIMEZONE
-from db.models import utcnow_iso
+from db.models import utcnow_iso, get_status_history_update
 from datetime import datetime
 from typing import Optional, Tuple
 
@@ -251,7 +251,11 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
     
     # Обновляем статус заказа на "in_transit" без изменения payment_status
     # Для тестовых заказов оплата будет установлена только при проверке оплаты
-    await db.couriers_deliveries.update_one({"_id": order["_id"]}, {"$set": {"status": "in_transit", "updated_at": utcnow_iso()}})
+    status_history_update = get_status_history_update(order, new_status="in_transit")
+    await db.couriers_deliveries.update_one(
+        {"_id": order["_id"]}, 
+        {"$set": {"status": "in_transit", "updated_at": utcnow_iso(), **status_history_update}}
+    )
     
     order = await db.couriers_deliveries.find_one({"_id": order["_id"]})
     
@@ -405,13 +409,15 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     
     # Для наличных заказов с client_ip закрываем сразу без фото
     logger.debug(f"[ORDERS] 💾 Закрытие заказа {external_id} после оплаты наличными (с client_ip)")
+    status_history_update = get_status_history_update(order, new_status="done", new_payment_status="PAID")
     await db.couriers_deliveries.update_one(
         {"external_id": external_id},
         {
             "$set": {
                 "status": "done",
                 "payment_status": "PAID",
-                "updated_at": utcnow_iso()
+                "updated_at": utcnow_iso(),
+                **status_history_update
             }
         }
     )
@@ -705,12 +711,14 @@ async def cb_order_done(call: CallbackQuery, bot: Bot):
         from utils.webhooks import send_webhook, prepare_order_data
         
         logger.debug(f"[ORDERS] 💾 Закрытие заказа {external_id} без фото")
+        status_history_update = get_status_history_update(order, new_status="done")
         await db.couriers_deliveries.update_one(
             {"external_id": external_id},
             {
                 "$set": {
                     "status": "done",
-                    "updated_at": utcnow_iso()
+                    "updated_at": utcnow_iso(),
+                    **status_history_update
                 }
             }
         )

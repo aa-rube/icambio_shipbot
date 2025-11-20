@@ -4,7 +4,7 @@ from db.redis_client import get_redis
 from db.mongo import get_db
 from utils.notifications import notify_manager
 from utils.test_orders import is_test_order
-from db.models import utcnow_iso
+from db.models import utcnow_iso, get_status_history_update
 
 router = Router()
 
@@ -88,8 +88,12 @@ async def handle_photo(message: Message, bot: Bot):
     file_id = photo.file_id
 
     # Для наличных заказов без client_ip устанавливаем статус оплаты в PAID при закрытии
+    # Определяем, нужно ли обновлять payment_status
+    new_payment_status = "PAID" if (is_cash_payment and not has_client_ip) else None
+    status_history_update = get_status_history_update(order, new_status="done", new_payment_status=new_payment_status)
+    
     update_data = {
-        "$set": {"status": "done", "updated_at": utcnow_iso()},
+        "$set": {"status": "done", "updated_at": utcnow_iso(), **status_history_update},
         "$push": {"photos": {"file_id": file_id, "uploaded_at": utcnow_iso()}}
     }
     

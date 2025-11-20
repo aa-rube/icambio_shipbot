@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from aiogram import Bot
 from db.mongo import get_db
 from db.redis_client import get_redis
-from db.models import IncomingOrder, UpdateOrder, utcnow_iso
+from db.models import IncomingOrder, UpdateOrder, utcnow_iso, get_status_history_update
 from keyboards.orders_kb import new_order_kb
 from utils.logger import setup_logging
 from utils.order_format import format_order_text
@@ -100,6 +100,15 @@ async def create_order(payload: IncomingOrder, request: Request):
         raise HTTPException(status_code=409, detail="Order with this external_id already exists")
     logger.debug(f"[API] ✅ external_id уникален")
 
+    # Инициализируем историю статусов
+    current_time = utcnow_iso()
+    status_history = {
+        "waiting": current_time
+    }
+    # Добавляем начальный статус оплаты
+    payment_status_key = "un_paid" if payload.payment_status == "NOT_PAID" else "paid"
+    status_history[payment_status_key] = current_time
+    
     order_doc = {
         "external_id": payload.external_id,
         "courier_tg_chat_id": payload.courier_tg_chat_id,
@@ -111,8 +120,9 @@ async def create_order(payload: IncomingOrder, request: Request):
         "priority": payload.priority,
         "brand": payload.brand,
         "source": payload.source,
-        "created_at": utcnow_iso(),
-        "updated_at": utcnow_iso(),
+        "created_at": current_time,
+        "updated_at": current_time,
+        "status_history": status_history,
         "client": {
             "name": payload.client_name,
             "phone": payload.client_phone,
@@ -195,8 +205,13 @@ async def update_order(external_id: str, payload: UpdateOrder):
     logger.debug(f"[API] ✅ Заказ найден: _id={order.get('_id')}")
     
     update_data = {"updated_at": utcnow_iso()}
+    
+    # Если обновляется payment_status, добавляем запись в историю
     if payload.payment_status is not None:
         update_data["payment_status"] = payload.payment_status
+        status_history_update = get_status_history_update(order, new_payment_status=payload.payment_status)
+        update_data.update(status_history_update)
+    
     if payload.is_cash_payment is not None:
         update_data["is_cash_payment"] = payload.is_cash_payment
     if payload.delivery_time is not None:
