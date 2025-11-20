@@ -7,6 +7,8 @@ from db.mongo import get_db
 from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb, active_orders_kb, order_edit_kb, courier_list_kb, all_deliveries_kb, all_orders_list_kb, courier_transfer_kb
 from db.redis_client import get_redis
 from utils.url_shortener import shorten_url
+from utils.test_orders import is_test_order
+from utils.webhooks import send_webhook, prepare_order_data
 from config import TIMEZONE
 
 router = Router()
@@ -1267,6 +1269,24 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
             }
         }
     )
+    
+    # Получаем обновленный заказ для webhook
+    updated_order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    
+    # Проверка: если заказ тестовый (отрицательный external_id), не отправляем webhook
+    is_test = is_test_order(external_id)
+    
+    # Отправка webhook только для реальных заказов (не тестовых)
+    if not is_test:
+        order_data = await prepare_order_data(db, updated_order)
+        webhook_data = {
+            **order_data,
+            "timestamp": utcnow_iso()
+        }
+        await send_webhook("order_completed", webhook_data)
+        logger.info(f"[ADMIN] 📤 Webhook 'order_completed' отправлен для заказа {external_id}")
+    else:
+        logger.info(f"[ADMIN] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
     
     # Отправляем сообщение курьеру
     try:
