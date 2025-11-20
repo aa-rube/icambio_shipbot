@@ -31,6 +31,87 @@ class UpdateOrder(BaseModel):
     map_url: Optional[str] = None
     notes: Optional[str] = None
 
+# --- Admin API Models ---
+
+class CourierOrdersStats(BaseModel):
+    total_today: int
+    delivered_today: int
+    waiting: int
+
+class CourierOnShift(BaseModel):
+    chat_id: int
+    name: str
+    username: Optional[str] = None
+    status: str
+    orders: CourierOrdersStats
+    shift_started_at: Optional[str] = None
+    shift_started_at_readable: str
+
+class CouriersOnShiftResponse(BaseModel):
+    ok: bool = True
+    couriers: List[CourierOnShift]
+
+class LocationData(BaseModel):
+    lat: float
+    lon: float
+    maps_url: str
+    timestamp: Optional[str] = None
+
+class CourierLocationResponse(BaseModel):
+    ok: bool = True
+    chat_id: int
+    location: LocationData
+
+class RouteTimeRange(BaseModel):
+    start: str
+    end: str
+
+class RouteData(BaseModel):
+    maps_url: str
+    points_count: int
+    time_range: RouteTimeRange
+
+class CourierRouteResponse(BaseModel):
+    ok: bool = True
+    chat_id: int
+    route: RouteData
+
+class PaginationInfo(BaseModel):
+    page: int
+    per_page: int
+    total: int
+    total_pages: int
+
+class ActiveOrdersResponse(BaseModel):
+    ok: bool = True
+    orders: List[Dict[str, Any]]
+    pagination: PaginationInfo
+
+class AssignCourierRequest(BaseModel):
+    courier_chat_id: int
+
+class CloseShiftRequest(BaseModel):
+    transfer_to_chat_id: Optional[int] = None
+
+class OrderCompleteResponse(BaseModel):
+    ok: bool = True
+    external_id: str
+    status: str = "done"
+
+class OrderDeleteResponse(BaseModel):
+    ok: bool = True
+    external_id: str
+
+class OrderAssignResponse(BaseModel):
+    ok: bool = True
+    external_id: str
+    courier_chat_id: int
+
+class CloseShiftResponse(BaseModel):
+    ok: bool = True
+    chat_id: int
+    message: str
+
 # Helpers
 def utcnow_iso() -> str:
     """Возвращает текущее время в таймзоне Buenos Aires в ISO формате"""

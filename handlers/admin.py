@@ -2,7 +2,8 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from typing import Optional
+from typing import Optional, Dict, Any, Tuple
+from datetime import datetime, timedelta
 from db.mongo import get_db
 from keyboards.admin_kb import admin_main_kb, back_to_admin_kb, user_list_kb, confirm_delete_kb, broadcast_kb, request_user_kb, courier_location_kb, courier_location_with_back_kb, location_back_kb, route_back_kb, active_orders_kb, order_edit_kb, courier_list_kb, all_deliveries_kb, all_orders_list_kb, courier_transfer_kb
 from db.redis_client import get_redis
@@ -71,6 +72,245 @@ async def is_super_admin(user_id: int) -> bool:
     user_type = admins.get(str(user_id))
     logger.info(f"User {user_id} type: {user_type}")
     return user_type == "SUPER_ADMIN"
+
+# --- Reusable helper functions for API ---
+
+async def get_courier_statistics(chat_id: int, db) -> Dict[str, Any]:
+    """
+    Получает статистику курьера: заказы за сегодня, доставленные, ожидающие, статус.
+    
+    Returns:
+        dict с ключами: total_today, delivered_today, waiting_orders, status, status_text
+    """
+    now = datetime.now(TIMEZONE)
+    start_today = datetime(now.year, now.month, now.day, tzinfo=TIMEZONE)
+    
+    total_today = await db.couriers_deliveries.count_documents({
+        "courier_tg_chat_id": chat_id,
+        "created_at": {"$gte": start_today.isoformat()}
+    })
+    
+    delivered_today = await db.couriers_deliveries.count_documents({
+        "courier_tg_chat_id": chat_id,
+        "status": "done",
+        "created_at": {"$gte": start_today.isoformat()}
+    })
+    
+    waiting_orders = await db.couriers_deliveries.count_documents({
+        "courier_tg_chat_id": chat_id,
+        "status": {"$in": ["waiting", "in_transit"]}
+    })
+    
+    # Определяем статус курьера
+    in_transit_order = await db.couriers_deliveries.find_one({
+        "courier_tg_chat_id": chat_id,
+        "status": "in_transit"
+    })
+    
+    if in_transit_order:
+        status_text = f"В пути ({in_transit_order.get('external_id', 'N/A')})"
+        status = "in_transit"
+    elif waiting_orders > 0:
+        status_text = "Есть заказы"
+        status = "has_orders"
+    else:
+        status_text = "Нет заказов"
+        status = "no_orders"
+    
+    return {
+        "total_today": total_today,
+        "delivered_today": delivered_today,
+        "waiting_orders": waiting_orders,
+        "status": status,
+        "status_text": status_text,
+        "in_transit_order": in_transit_order
+    }
+
+def format_shift_time(shift_started_at: Optional[str]) -> Tuple[str, Optional[str]]:
+    """
+    Форматирует время начала смены в читаемый формат.
+    
+    Returns:
+        tuple: (readable_text, iso_string)
+    """
+    if not shift_started_at:
+        return "Не указано", None
+    
+    try:
+        if shift_started_at.endswith('Z'):
+            shift_dt = datetime.fromisoformat(shift_started_at.replace('Z', '+00:00'))
+        else:
+            shift_dt = datetime.fromisoformat(shift_started_at)
+        if shift_dt.tzinfo is None:
+            shift_dt = shift_dt.replace(tzinfo=TIMEZONE)
+        elif shift_dt.tzinfo != TIMEZONE:
+            shift_dt = shift_dt.astimezone(TIMEZONE)
+        months_ru = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+        month_ru = months_ru[shift_dt.month - 1]
+        shift_time_text = f"{shift_dt.day} {month_ru}. {shift_dt.strftime('%H:%M')}"
+        return shift_time_text, shift_started_at
+    except:
+        return shift_started_at, shift_started_at
+
+async def get_courier_location(chat_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает последнюю известную локацию курьера из Redis или БД.
+    
+    Returns:
+        dict с ключами: lat, lon, timestamp или None если не найдено
+    """
+    redis = get_redis()
+    loc_str = await redis.get(f"courier:loc:{chat_id}")
+    
+    lat = None
+    lon = None
+    
+    if loc_str:
+        try:
+            parts = loc_str.split(",")
+            if len(parts) == 2:
+                lat = float(parts[0])
+                lon = float(parts[1])
+        except (ValueError, IndexError):
+            pass
+    
+    # Если не нашли в Redis, ищем в БД
+    if lat is None or lon is None:
+        db = await get_db()
+        last_location = await db.locations.find_one(
+            {"chat_id": chat_id},
+            sort=[("timestamp_ns", -1)]
+        )
+        
+        if not last_location:
+            return None
+        
+        lat = last_location.get("lat")
+        lon = last_location.get("lon")
+        
+        if not lat or not lon:
+            return None
+    
+    # Валидация координат
+    if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+        return None
+    
+    # Получаем timestamp из БД если есть
+    db = await get_db()
+    last_location = await db.locations.find_one(
+        {"chat_id": chat_id},
+        sort=[("timestamp_ns", -1)]
+    )
+    timestamp = None
+    if last_location and last_location.get("timestamp_ns"):
+        timestamp = datetime.fromtimestamp(last_location.get("timestamp_ns", 0) / 1e9, tz=TIMEZONE).isoformat()
+    
+    return {
+        "lat": lat,
+        "lon": lon,
+        "timestamp": timestamp
+    }
+
+async def get_courier_route(chat_id: int, max_waypoints: int = 50) -> Optional[Dict[str, Any]]:
+    """
+    Получает маршрут курьера за последние 72 часа.
+    
+    Returns:
+        dict с ключами: maps_url, points_count, time_range или None если недостаточно данных
+    """
+    db = await get_db()
+    now = datetime.now(TIMEZONE)
+    time_72h_ago = now - timedelta(hours=72)
+    time_24h_ago = now - timedelta(hours=24)
+    
+    # Получаем все локации за последние 72 часа
+    locations = await db.locations.find(
+        {
+            "chat_id": chat_id,
+            "timestamp_ns": {"$gte": int(time_72h_ago.timestamp() * 1e9)}
+        }
+    ).sort("timestamp_ns", 1).to_list(10000)
+    
+    if not locations:
+        return None
+    
+    # Проверяем последнюю локацию - она должна быть не старше 24 часов
+    last_location = locations[-1]
+    last_location_time = datetime.fromtimestamp(last_location.get("timestamp_ns", 0) / 1e9, tz=TIMEZONE)
+    
+    if last_location_time < time_24h_ago:
+        recent_location = await db.locations.find_one(
+            {
+                "chat_id": chat_id,
+                "timestamp_ns": {"$gte": int(time_24h_ago.timestamp() * 1e9)}
+            },
+            sort=[("timestamp_ns", -1)]
+        )
+        
+        if recent_location:
+            locations = [loc for loc in locations if loc.get("timestamp_ns") <= recent_location.get("timestamp_ns")]
+            locations.append(recent_location)
+    
+    if len(locations) < 2:
+        # Если только одна точка
+        loc = locations[0]
+        maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
+        return {
+            "maps_url": maps_url,
+            "points_count": 1,
+            "time_range": {
+                "start": datetime.fromtimestamp(loc.get("timestamp_ns", 0) / 1e9, tz=TIMEZONE).isoformat(),
+                "end": datetime.fromtimestamp(loc.get("timestamp_ns", 0) / 1e9, tz=TIMEZONE).isoformat()
+            }
+        }
+    
+    # Формируем waypoints
+    waypoints = []
+    for loc in locations:
+        lat = loc.get("lat")
+        lon = loc.get("lon")
+        if lat is not None and lon is not None:
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                waypoints.append(f"{lat},{lon}")
+    
+    if len(waypoints) < 2:
+        loc = locations[0]
+        maps_url = f"https://maps.google.com/?q={loc['lat']},{loc['lon']}"
+        return {
+            "maps_url": maps_url,
+            "points_count": 1,
+            "time_range": {
+                "start": datetime.fromtimestamp(loc.get("timestamp_ns", 0) / 1e9, tz=TIMEZONE).isoformat(),
+                "end": datetime.fromtimestamp(loc.get("timestamp_ns", 0) / 1e9, tz=TIMEZONE).isoformat()
+            }
+        }
+    
+    # Ограничиваем количество точек
+    if len(waypoints) > max_waypoints:
+        selected_waypoints = [waypoints[0]]
+        step = len(waypoints) / (max_waypoints - 1)
+        for i in range(1, max_waypoints - 1):
+            idx = int(i * step)
+            if idx < len(waypoints):
+                selected_waypoints.append(waypoints[idx])
+        selected_waypoints.append(waypoints[-1])
+        waypoints = selected_waypoints
+    
+    # Создаем URL с маршрутом
+    waypoints_str = "/".join(waypoints)
+    maps_url = f"https://www.google.com/maps/dir/{waypoints_str}"
+    
+    # Сокращаем URL
+    maps_url = await shorten_url(maps_url)
+    
+    return {
+        "maps_url": maps_url,
+        "points_count": len(waypoints),
+        "time_range": {
+            "start": datetime.fromtimestamp(locations[0].get("timestamp_ns", 0) / 1e9, tz=TIMEZONE).isoformat(),
+            "end": datetime.fromtimestamp(locations[-1].get("timestamp_ns", 0) / 1e9, tz=TIMEZONE).isoformat()
+        }
+    }
 
 @router.message(F.text == "/admin")
 async def cmd_admin(message: Message):

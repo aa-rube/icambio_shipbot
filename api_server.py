@@ -1,17 +1,30 @@
 import uvicorn
 import json
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Header, Query
 from fastapi.responses import JSONResponse, RedirectResponse
 from aiogram import Bot
 from db.mongo import get_db
 from db.redis_client import get_redis
-from db.models import IncomingOrder, UpdateOrder, utcnow_iso, get_status_history_update
-from keyboards.orders_kb import new_order_kb
+from db.models import (
+    IncomingOrder, UpdateOrder, utcnow_iso, get_status_history_update,
+    CouriersOnShiftResponse, CourierOnShift, CourierOrdersStats,
+    CourierLocationResponse, LocationData,
+    CourierRouteResponse, RouteData, RouteTimeRange,
+    ActiveOrdersResponse, PaginationInfo,
+    AssignCourierRequest, CloseShiftRequest,
+    OrderCompleteResponse, OrderDeleteResponse, OrderAssignResponse, CloseShiftResponse
+)
+from keyboards.orders_kb import new_order_kb, in_transit_kb
 from utils.logger import setup_logging
 from utils.order_format import format_order_text
 from utils.notifications import notify_manager
 from utils.test_orders import is_test_order
+from handlers.admin import (
+    is_super_admin, get_courier_statistics, format_shift_time,
+    get_courier_location, get_courier_route
+)
+from utils.webhooks import send_webhook, prepare_order_data
 from config import BOT_TOKEN, API_HOST, API_PORT, TIMEZONE
 
 app = FastAPI(title="Courier Local API")
@@ -65,6 +78,23 @@ def _is_local_ip(ip: str) -> bool:
 async def on_startup():
     # Инициализация уже выполняется в bot.py, здесь только логирование
     setup_logging()
+
+# --- Admin API Authentication ---
+
+async def verify_admin(x_admin_user_id: int = Header(..., alias="X-Admin-User-ID")) -> int:
+    """
+    Проверяет права администратора через заголовок X-Admin-User-ID.
+    Вызывает HTTPException(403) если пользователь не является супер-админом.
+    Используется как dependency в FastAPI endpoints.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not await is_super_admin(x_admin_user_id):
+        logger.warning(f"[API] ⚠️ Доступ запрещен для пользователя {x_admin_user_id}")
+        raise HTTPException(status_code=403, detail="Access denied. Super admin rights required.")
+    
+    return x_admin_user_id
 
 @app.post("/api/orders")
 async def create_order(payload: IncomingOrder, request: Request):
@@ -433,3 +463,562 @@ async def location_redirect(key: str, lang: str = None):
     
     # Редиректим на Google Maps
     return RedirectResponse(url=maps_url, status_code=302)
+
+# --- Admin API Endpoints ---
+
+@app.get("/api/admin/couriers/on-shift", response_model=CouriersOnShiftResponse)
+async def get_couriers_on_shift(admin_user_id: int = verify_admin):
+    """
+    Главный экран - список курьеров на смене.
+    Возвращает список всех курьеров с is_on_shift: True с полной информацией.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[API] 🚚 Админ {admin_user_id} запрашивает список курьеров на смене")
+    
+    db = await get_db()
+    from datetime import datetime
+    
+    # Получаем всех курьеров на смене
+    couriers = await db.couriers.find({"is_on_shift": True}).to_list(1000)
+    logger.info(f"[API] 📊 Найдено {len(couriers)} курьеров на смене")
+    
+    result_couriers = []
+    
+    for courier in couriers:
+        chat_id = courier.get("tg_chat_id")
+        name = courier.get("name", "Unknown")
+        username = courier.get("username")
+        
+        # Получаем статистику
+        stats = await get_courier_statistics(chat_id, db)
+        
+        # Форматируем время начала смены
+        shift_started_at = courier.get("shift_started_at")
+        shift_time_readable, shift_time_iso = format_shift_time(shift_started_at)
+        
+        result_couriers.append(CourierOnShift(
+            chat_id=chat_id,
+            name=name,
+            username=username,
+            status=stats["status_text"],
+            orders=CourierOrdersStats(
+                total_today=stats["total_today"],
+                delivered_today=stats["delivered_today"],
+                waiting=stats["waiting_orders"]
+            ),
+            shift_started_at=shift_time_iso,
+            shift_started_at_readable=shift_time_readable
+        ))
+    
+    return CouriersOnShiftResponse(couriers=result_couriers)
+
+@app.get("/api/admin/couriers/{chat_id}/location", response_model=CourierLocationResponse)
+async def get_courier_location_endpoint(
+    chat_id: int,
+    admin_user_id: int = verify_admin
+):
+    """
+    Текущее местоположение курьера.
+    Возвращает последнюю известную локацию курьера с ссылкой на Google Maps.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[API] 📍 Админ {admin_user_id} запрашивает локацию курьера {chat_id}")
+    
+    location_data = await get_courier_location(chat_id)
+    
+    if not location_data:
+        raise HTTPException(status_code=404, detail="Location not found")
+    
+    maps_url = f"https://maps.google.com/?q={location_data['lat']},{location_data['lon']}"
+    
+    return CourierLocationResponse(
+        chat_id=chat_id,
+        location=LocationData(
+            lat=location_data["lat"],
+            lon=location_data["lon"],
+            maps_url=maps_url,
+            timestamp=location_data.get("timestamp")
+        )
+    )
+
+@app.get("/api/admin/couriers/{chat_id}/route", response_model=CourierRouteResponse)
+async def get_courier_route_endpoint(
+    chat_id: int,
+    admin_user_id: int = verify_admin
+):
+    """
+    Маршрут курьера за последние 72 часа.
+    Возвращает маршрут курьера с ссылкой на Google Maps (до 50 точек).
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[API] 🗺️ Админ {admin_user_id} запрашивает маршрут курьера {chat_id}")
+    
+    route_data = await get_courier_route(chat_id)
+    
+    if not route_data:
+        raise HTTPException(status_code=404, detail="Insufficient data for route")
+    
+    return CourierRouteResponse(
+        chat_id=chat_id,
+        route=RouteData(
+            maps_url=route_data["maps_url"],
+            points_count=route_data["points_count"],
+            time_range=RouteTimeRange(
+                start=route_data["time_range"]["start"],
+                end=route_data["time_range"]["end"]
+            )
+        )
+    )
+
+@app.get("/api/admin/couriers/{chat_id}/orders/active", response_model=ActiveOrdersResponse)
+async def get_courier_active_orders(
+    chat_id: int,
+    page: int = Query(0, ge=0),
+    per_page: int = Query(10, ge=1, le=100),
+    admin_user_id: int = verify_admin
+):
+    """
+    Активные заказы курьера.
+    Возвращает список активных заказов (waiting, in_transit) с пагинацией.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[API] 📦 Админ {admin_user_id} запрашивает активные заказы курьера {chat_id} (страница {page})")
+    
+    db = await get_db()
+    
+    # Получаем активные заказы курьера
+    all_orders = await db.couriers_deliveries.find({
+        "courier_tg_chat_id": chat_id,
+        "status": {"$in": ["waiting", "in_transit"]}
+    }).sort("priority", -1).sort("created_at", 1).to_list(1000)
+    
+    total = len(all_orders)
+    total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+    page = max(0, min(page, total_pages - 1))
+    
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    orders = all_orders[start_idx:end_idx]
+    
+    # Преобразуем ObjectId в строки для JSON
+    orders_json = []
+    for order in orders:
+        order_dict = dict(order)
+        if "_id" in order_dict:
+            order_dict["_id"] = str(order_dict["_id"])
+        if "assigned_to" in order_dict and order_dict["assigned_to"]:
+            order_dict["assigned_to"] = str(order_dict["assigned_to"])
+        orders_json.append(order_dict)
+    
+    return ActiveOrdersResponse(
+        orders=orders_json,
+        pagination=PaginationInfo(
+            page=page,
+            per_page=per_page,
+            total=total,
+            total_pages=total_pages
+        )
+    )
+
+@app.get("/api/admin/couriers/{chat_id}")
+async def get_courier_details(
+    chat_id: int,
+    admin_user_id: int = verify_admin
+):
+    """
+    Детальная информация о курьере.
+    Возвращает полную информацию о курьере (объединяет данные из нескольких endpoints).
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[API] 👤 Админ {admin_user_id} запрашивает детали курьера {chat_id}")
+    
+    db = await get_db()
+    courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+    
+    if not courier:
+        raise HTTPException(status_code=404, detail="Courier not found")
+    
+    # Получаем статистику
+    stats = await get_courier_statistics(chat_id, db)
+    
+    # Форматируем время начала смены
+    shift_started_at = courier.get("shift_started_at")
+    shift_time_readable, shift_time_iso = format_shift_time(shift_started_at)
+    
+    # Получаем локацию
+    location_data = await get_courier_location(chat_id)
+    
+    result = {
+        "ok": True,
+        "chat_id": chat_id,
+        "name": courier.get("name", "Unknown"),
+        "username": courier.get("username"),
+        "is_on_shift": courier.get("is_on_shift", False),
+        "status": stats["status_text"],
+        "orders": {
+            "total_today": stats["total_today"],
+            "delivered_today": stats["delivered_today"],
+            "waiting": stats["waiting_orders"]
+        },
+        "shift_started_at": shift_time_iso,
+        "shift_started_at_readable": shift_time_readable
+    }
+    
+    if location_data:
+        result["location"] = {
+            "lat": location_data["lat"],
+            "lon": location_data["lon"],
+            "maps_url": f"https://maps.google.com/?q={location_data['lat']},{location_data['lon']}",
+            "timestamp": location_data.get("timestamp")
+        }
+    
+    return JSONResponse(result)
+
+@app.post("/api/admin/orders/{external_id}/complete", response_model=OrderCompleteResponse)
+async def complete_order(
+    external_id: str,
+    admin_user_id: int = verify_admin
+):
+    """
+    Завершить заказ.
+    Завершает заказ (статус -> done), отправляет webhook, уведомляет курьера.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[API] ✅ Админ {admin_user_id} завершает заказ {external_id}")
+    
+    db = await get_db()
+    
+    # Проверяем заказ
+    from handlers.orders import validate_order_for_action
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        admin_user_id,
+        allow_admin=True
+    )
+    
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg or "Cannot complete order")
+    
+    current_courier_chat_id = order.get("courier_tg_chat_id")
+    address = order.get("address", "")
+    
+    # Обновляем заказ
+    await db.couriers_deliveries.update_one(
+        {"external_id": external_id},
+        {
+            "$set": {
+                "status": "done",
+                "closed_by_admin_id": admin_user_id,
+                "updated_at": utcnow_iso()
+            }
+        }
+    )
+    
+    # Получаем обновленный заказ для webhook
+    updated_order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    
+    # Проверка: если заказ тестовый, не отправляем webhook
+    is_test = is_test_order(external_id)
+    
+    if not is_test:
+        order_data = await prepare_order_data(db, updated_order)
+        webhook_data = {
+            **order_data,
+            "timestamp": utcnow_iso()
+        }
+        await send_webhook("order_completed", webhook_data)
+        logger.info(f"[API] 📤 Webhook 'order_completed' отправлен для заказа {external_id}")
+    
+    # Отправляем сообщение курьеру
+    try:
+        await bot.send_message(
+            current_courier_chat_id,
+            f"✅ Заказ {external_id} выполнен\nАдрес: {address}"
+        )
+    except Exception as e:
+        logger.warning(f"[API] ⚠️ Не удалось отправить сообщение курьеру {current_courier_chat_id}: {e}")
+    
+    return OrderCompleteResponse(external_id=external_id)
+
+@app.delete("/api/admin/orders/{external_id}", response_model=OrderDeleteResponse)
+async def delete_order(
+    external_id: str,
+    admin_user_id: int = verify_admin
+):
+    """
+    Удалить заказ.
+    Удаляет заказ из системы, уведомляет курьера.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[API] 🗑️ Админ {admin_user_id} удаляет заказ {external_id}")
+    
+    db = await get_db()
+    order = await db.couriers_deliveries.find_one({"external_id": external_id})
+    
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    current_courier_chat_id = order.get("courier_tg_chat_id")
+    address = order.get("address", "")
+    
+    # Удаляем заказ
+    await db.couriers_deliveries.delete_one({"external_id": external_id})
+    
+    # Отправляем сообщение курьеру
+    try:
+        await bot.send_message(
+            current_courier_chat_id,
+            f"🗑 Заказ {external_id} удален\nАдрес: {address}"
+        )
+    except Exception as e:
+        logger.warning(f"[API] ⚠️ Не удалось отправить сообщение курьеру {current_courier_chat_id}: {e}")
+    
+    return OrderDeleteResponse(external_id=external_id)
+
+@app.patch("/api/admin/orders/{external_id}/assign", response_model=OrderAssignResponse)
+async def assign_courier_to_order(
+    external_id: str,
+    payload: AssignCourierRequest,
+    admin_user_id: int = verify_admin
+):
+    """
+    Назначить курьера на заказ.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[API] 👤 Админ {admin_user_id} назначает курьера {payload.courier_chat_id} для заказа {external_id}")
+    
+    db = await get_db()
+    
+    # Проверяем заказ
+    from handlers.orders import validate_order_for_action
+    is_valid, order, error_msg = await validate_order_for_action(
+        external_id,
+        admin_user_id,
+        allow_admin=True
+    )
+    
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg or "Cannot assign courier")
+    
+    new_courier = await db.couriers.find_one({"tg_chat_id": payload.courier_chat_id})
+    if not new_courier:
+        raise HTTPException(status_code=404, detail="Courier not found")
+    
+    old_courier_chat_id = order.get("courier_tg_chat_id")
+    address = order.get("address", "")
+    
+    # Обновляем заказ в БД
+    await db.couriers_deliveries.update_one(
+        {"external_id": external_id},
+        {
+            "$set": {
+                "courier_tg_chat_id": payload.courier_chat_id,
+                "assigned_to": new_courier["_id"],
+                "updated_at": utcnow_iso()
+            }
+        }
+    )
+    
+    # Обновляем курьера заказа в Odoo
+    try:
+        from utils.odoo import update_order_courier
+        await update_order_courier(external_id, str(payload.courier_chat_id))
+        logger.info(f"[API] ✅ Курьер заказа обновлен в Odoo")
+    except Exception as e:
+        logger.warning(f"[API] ⚠️ Не удалось обновить курьера заказа в Odoo: {e}")
+    
+    # Отправляем сообщение старому курьеру (если он отличается от нового)
+    if old_courier_chat_id != payload.courier_chat_id:
+        try:
+            await bot.send_message(
+                old_courier_chat_id,
+                f"🔄 Заказ {external_id} переназначен другому курьеру\nАдрес: {address}"
+            )
+        except Exception as e:
+            logger.warning(f"[API] ⚠️ Не удалось отправить сообщение старому курьеру {old_courier_chat_id}: {e}")
+    
+    # Отправляем сообщение новому курьеру
+    try:
+        order = await db.couriers_deliveries.find_one({"external_id": external_id})
+        text = format_order_text(order)
+        kb = new_order_kb(external_id) if order.get("status") == "waiting" else in_transit_kb(external_id, order)
+        await bot.send_message(
+            payload.courier_chat_id,
+            text,
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+    except Exception as e:
+        logger.warning(f"[API] ⚠️ Не удалось отправить сообщение новому курьеру {payload.courier_chat_id}: {e}")
+    
+    return OrderAssignResponse(external_id=external_id, courier_chat_id=payload.courier_chat_id)
+
+@app.post("/api/admin/couriers/{chat_id}/close-shift", response_model=CloseShiftResponse)
+async def close_courier_shift(
+    chat_id: int,
+    payload: CloseShiftRequest,
+    admin_user_id: int = verify_admin
+):
+    """
+    Закрыть смену курьера.
+    Если есть активные заказы и не указан transfer_to_chat_id, возвращает ошибку.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[API] 🔴 Админ {admin_user_id} закрывает смену курьера {chat_id}")
+    
+    db = await get_db()
+    redis = get_redis()
+    
+    courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+    if not courier:
+        raise HTTPException(status_code=404, detail="Courier not found")
+    
+    # Проверяем наличие активных заказов
+    active_orders = await db.couriers_deliveries.find({
+        "courier_tg_chat_id": chat_id,
+        "status": {"$in": ["waiting", "in_transit"]}
+    }).to_list(100)
+    
+    if active_orders:
+        if not payload.transfer_to_chat_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Courier has {len(active_orders)} active orders. Please specify transfer_to_chat_id to transfer orders."
+            )
+        
+        # Передаем заказы новому курьеру
+        new_courier = await db.couriers.find_one({"tg_chat_id": payload.transfer_to_chat_id})
+        if not new_courier:
+            raise HTTPException(status_code=404, detail="Transfer courier not found")
+        
+        from utils.odoo import update_order_courier
+        
+        transferred_count = 0
+        for order in active_orders:
+            external_id = order.get("external_id")
+            try:
+                await db.couriers_deliveries.update_one(
+                    {"external_id": external_id},
+                    {
+                        "$set": {
+                            "courier_tg_chat_id": payload.transfer_to_chat_id,
+                            "assigned_to": new_courier["_id"],
+                            "updated_at": utcnow_iso()
+                        }
+                    }
+                )
+                
+                try:
+                    await update_order_courier(external_id, str(payload.transfer_to_chat_id))
+                except Exception as e:
+                    logger.warning(f"[API] ⚠️ Не удалось обновить курьера заказа {external_id} в Odoo: {e}")
+                
+                transferred_count += 1
+            except Exception as e:
+                logger.error(f"[API] ❌ Ошибка передачи заказа {external_id}: {e}", exc_info=True)
+        
+        logger.info(f"[API] ✅ Передано {transferred_count} заказов от курьера {chat_id} курьеру {payload.transfer_to_chat_id}")
+        
+        # Отправляем сообщение новому курьеру о переданных заказах
+        try:
+            for order in active_orders:
+                try:
+                    text = format_order_text(order)
+                    kb = new_order_kb(order["external_id"]) if order.get("status") == "waiting" else in_transit_kb(order["external_id"], order)
+                    await bot.send_message(
+                        payload.transfer_to_chat_id,
+                        text,
+                        parse_mode="HTML",
+                        reply_markup=kb
+                    )
+                except Exception as e:
+                    logger.warning(f"[API] ⚠️ Не удалось отправить сообщение новому курьеру {payload.transfer_to_chat_id} о заказе {order.get('external_id')}: {e}")
+        except Exception as e:
+            logger.warning(f"[API] ⚠️ Ошибка отправки сообщений новому курьеру: {e}")
+    
+    # Сохраняем время начала смены для подсчета заказов
+    shift_started_at = courier.get("shift_started_at")
+    current_shift_id = courier.get("current_shift_id")
+    
+    # Подсчет заказов за смену
+    orders_count = 0
+    complete_orders_count = 0
+    
+    if shift_started_at:
+        try:
+            orders_count = await db.couriers_deliveries.count_documents({
+                "courier_tg_chat_id": chat_id,
+                "created_at": {"$gte": shift_started_at}
+            })
+            complete_orders_count = await db.couriers_deliveries.count_documents({
+                "courier_tg_chat_id": chat_id,
+                "status": "done",
+                "created_at": {"$gte": shift_started_at}
+            })
+        except Exception as e:
+            logger.warning(f"[API] ⚠️ Ошибка подсчета заказов за смену: {e}", exc_info=True)
+    
+    # Обновляем статус курьера
+    await db.couriers.update_one(
+        {"_id": courier["_id"]},
+        {"$set": {"is_on_shift": False}, "$unset": {"current_shift_id": "", "shift_started_at": ""}}
+    )
+    
+    # Удаляем данные из Redis
+    await redis.delete(f"courier:shift:{chat_id}")
+    await redis.delete(f"courier:loc:{chat_id}")
+    
+    # Записываем в историю
+    from db.models import Action, ShiftHistory
+    await Action.log(db, chat_id, "shift_end")
+    await ShiftHistory.log(
+        db,
+        chat_id,
+        "shift_ended",
+        shift_id=current_shift_id,
+        total_orders=orders_count,
+        complete_orders=complete_orders_count,
+        shift_started_at=shift_started_at
+    )
+    
+    # Обновление статуса в Odoo
+    try:
+        from utils.odoo import update_courier_status
+        await update_courier_status(str(chat_id), is_online=False)
+    except Exception as e:
+        logger.warning(f"[API] ⚠️ Не удалось обновить статус курьера в Odoo: {e}")
+    
+    # Отправляем сообщение курьеру
+    try:
+        await bot.send_message(
+            chat_id,
+            "🔴 Ваша смена завершена офис-менеджером.\n\nСпасибо за работу!"
+        )
+    except Exception as e:
+        logger.warning(f"[API] ⚠️ Не удалось отправить сообщение курьеру {chat_id}: {e}")
+    
+    message = f"Shift closed successfully"
+    if active_orders:
+        message += f". {len(active_orders)} orders transferred to courier {payload.transfer_to_chat_id}"
+    
+    logger.info(f"[API] ✅ Смена курьера {chat_id} закрыта админом")
+    
+    return CloseShiftResponse(chat_id=chat_id, message=message)
