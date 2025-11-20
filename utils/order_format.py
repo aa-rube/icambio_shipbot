@@ -63,7 +63,18 @@ def format_order_text(order: dict) -> str:
     # Используем маппинг для статуса оплаты
     payment_status = order.get('payment_status', 'NOT_PAID')
     payment_status_ru = payment_status_text.get(payment_status, payment_status)
-    text += f"💳 {payment_status_ru} | {priority_emoji} Приоритет: {order.get('priority', 0)}\n"
+    
+    # Выбираем эмодзи в зависимости от статуса оплаты
+    if payment_status == 'NOT_PAID':
+        payment_emoji = "❌❌❌"
+    elif payment_status == 'PAID':
+        payment_emoji = "✅✅✅"
+    elif payment_status == 'REFUND':
+        payment_emoji = "◼️◼️◼️"
+    else:
+        payment_emoji = "💳"  # Для других статусов
+    
+    text += f"{payment_emoji} {payment_status_ru} | {priority_emoji} Приоритет: {order.get('priority', 0)}\n"
     
     if order.get("delivery_time"):
         text += f"⏰ {order['delivery_time']}\n"
