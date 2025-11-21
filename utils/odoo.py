@@ -147,10 +147,6 @@ async def odoo_call(method: str, model: str, method_name: str, args: list, kwarg
     
     logger.debug(f"[Odoo API] Calling: model={model}, method={method_name}")
     
-    # Логируем данные запроса для отладки (только для create и write операций)
-    if method_name in ["create", "write"]:
-        logger.debug(f"[Odoo API] Request data: {json.dumps(payload, indent=2, ensure_ascii=False, default=str)}")
-    
     try:
         async with aiohttp.ClientSession() as session:
             # API ключ также передается через Basic Auth для дополнительной безопасности
