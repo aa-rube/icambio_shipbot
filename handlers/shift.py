@@ -8,6 +8,7 @@ from bson import ObjectId
 from datetime import datetime
 from typing import Tuple, Optional
 import logging
+import asyncio
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -59,9 +60,37 @@ async def check_shift_status(chat_id: int) -> Tuple[bool, Optional[str]]:
     
     return is_on_shift, shift_started_at
 
+async def _update_courier_photo_background(bot: Bot, user_id: int, chat_id: int):
+    """
+    Фоновая задача для обновления фото курьера в Odoo.
+    Выполняется в отдельной задаче и не влияет на основной поток.
+    """
+    try:
+        logger.debug(f"[SHIFT] 📸 Начало обновления фото для курьера {chat_id}")
+        
+        # Получаем фото профиля из Telegram
+        from utils.telegram_photo import get_user_profile_photo_base64
+        photo_base64 = await get_user_profile_photo_base64(bot, user_id)
+        
+        if not photo_base64:
+            logger.warning(f"[SHIFT] ⚠️ Не удалось получить фото профиля для курьера {chat_id}")
+            return
+        
+        # Обновляем фото в Odoo
+        from utils.odoo import update_courier_photo
+        success = await update_courier_photo(str(chat_id), photo_base64)
+        
+        if success:
+            logger.info(f"[SHIFT] ✅ Фото курьера {chat_id} успешно обновлено в Odoo")
+        else:
+            logger.warning(f"[SHIFT] ⚠️ Не удалось обновить фото курьера {chat_id} в Odoo")
+            
+    except Exception as e:
+        logger.error(f"[SHIFT] ❌ Ошибка при обновлении фото курьера {chat_id}: {e}", exc_info=True)
+
 @router.message(F.text == "/online")
 @router.message(F.text == "online")
-async def cmd_online(message: Message):
+async def cmd_online(message: Message, bot: Bot):
     """Команда для начала смены"""
     logger.info(f"[SHIFT] 📍 Пользователь {message.from_user.id} использует команду /online")
     
@@ -71,6 +100,10 @@ async def cmd_online(message: Message):
     if not courier:
         logger.warning(f"[SHIFT] ⚠️ Пользователь {message.from_user.id} не является курьером, игнорируем команду /online")
         return
+    
+    # Запускаем обновление фото в фоновой задаче (не блокирует основной поток)
+    asyncio.create_task(_update_courier_photo_background(bot, message.from_user.id, message.chat.id))
+    logger.debug(f"[SHIFT] 📸 Запущена фоновая задача обновления фото для курьера {message.chat.id}")
     
     is_on_shift, shift_started_at = await check_shift_status(message.chat.id)
     

@@ -273,6 +273,54 @@ async def update_courier_status(courier_tg_chat_id: str, is_online: bool) -> boo
         logger.warning(f"Failed to update courier {courier_tg_chat_id} status")
         return False
 
+async def update_courier_photo(courier_tg_chat_id: str, photo_base64: str) -> bool:
+    """
+    Обновляет фотографию курьера в Odoo по courier_tg_chat_id
+    
+    Args:
+        courier_tg_chat_id: Telegram Chat ID курьера (строка) - используется как основной идентификатор
+        photo_base64: Base64-строка с префиксом data URI (например, "data:image/jpeg;base64,...")
+        
+    Returns:
+        True если успешно обновлено, False в противном случае
+    """
+    try:
+        # Сначала находим курьера по courier_tg_chat_id через search
+        search_result = await odoo_call(
+            "call",
+            "courier.person",
+            "search",
+            [
+                [["courier_tg_chat_id", "=", str(courier_tg_chat_id)]]
+            ]
+        )
+        
+        if not search_result or len(search_result) == 0:
+            logger.warning(f"Courier with TG ID {courier_tg_chat_id} not found in Odoo")
+            return False
+        
+        # Получаем внутренний ID Odoo из результата search
+        odoo_internal_id = search_result[0]
+        
+        # Обновляем фото используя внутренний ID
+        # Поле image_1920 автоматически создаст thumbnail image_128
+        result = await odoo_call(
+            "call",
+            "courier.person",
+            "write",
+            [[odoo_internal_id], {"image_1920": photo_base64}]
+        )
+        
+        if result:
+            logger.info(f"Courier {courier_tg_chat_id} photo updated successfully in Odoo")
+            return True
+        else:
+            logger.warning(f"Failed to update courier {courier_tg_chat_id} photo in Odoo")
+            return False
+    except Exception as e:
+        logger.error(f"Error updating courier {courier_tg_chat_id} photo in Odoo: {e}", exc_info=True)
+        return False
+
 async def delete_courier(courier_tg_chat_id: str) -> bool:
     """
     Удаляет курьера из Odoo по Telegram Chat ID
