@@ -279,12 +279,25 @@ async def update_courier_photo(courier_tg_chat_id: str, photo_base64: str) -> bo
     
     Args:
         courier_tg_chat_id: Telegram Chat ID курьера (строка) - используется как основной идентификатор
-        photo_base64: Base64-строка с префиксом data URI (например, "data:image/jpeg;base64,...")
+        photo_base64: Base64-строка (чистая или с префиксом data URI, например, "data:image/jpeg;base64,...")
+                     Odoo ожидает только чистый base64 без префикса
         
     Returns:
         True если успешно обновлено, False в противном случае
     """
     try:
+        # Извлекаем чистый base64, если передан data URI
+        clean_base64 = photo_base64
+        if photo_base64.startswith('data:'):
+            # Убираем префикс data URI (например, "data:image/jpeg;base64,")
+            # Ищем запятую после base64,
+            comma_index = photo_base64.find(',')
+            if comma_index != -1:
+                clean_base64 = photo_base64[comma_index + 1:]
+                logger.debug(f"Extracted clean base64 from data URI (removed {comma_index + 1} chars)")
+            else:
+                logger.warning(f"Data URI format seems incorrect, using as-is")
+        
         # Сначала находим курьера по courier_tg_chat_id через search
         search_result = await odoo_call(
             "call",
@@ -304,11 +317,12 @@ async def update_courier_photo(courier_tg_chat_id: str, photo_base64: str) -> bo
         
         # Обновляем фото используя внутренний ID
         # Поле image_1920 автоматически создаст thumbnail image_128
+        # Odoo ожидает только чистый base64 без префикса data URI
         result = await odoo_call(
             "call",
             "courier.person",
             "write",
-            [[odoo_internal_id], {"image_1920": photo_base64}]
+            [[odoo_internal_id], {"image_1920": clean_base64}]
         )
         
         if result:

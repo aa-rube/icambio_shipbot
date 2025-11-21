@@ -1,23 +1,26 @@
 import logging
 import base64
 import json
+import io
 from typing import Optional
 from aiogram import Bot
 import aiohttp
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
 async def get_user_profile_photo_base64(bot: Bot, user_id: int) -> Optional[str]:
     """
-    Получает фото профиля пользователя из Telegram и конвертирует в base64 с префиксом data URI
+    Получает фото профиля пользователя из Telegram и конвертирует в base64
     Использует прямые HTTPS запросы к API Telegram для избежания проблем с file_id
+    Валидирует изображение через PIL перед возвратом
     
     Args:
         bot: Экземпляр бота для работы с Telegram API (используется только для получения токена)
         user_id: ID пользователя в Telegram
         
     Returns:
-        Base64-строка с префиксом data URI (например, "data:image/jpeg;base64,...") или None в случае ошибки
+        Чистая base64-строка (без префикса data URI) или None в случае ошибки
     """
     try:
         # Получаем токен бота
@@ -101,25 +104,28 @@ async def get_user_profile_photo_base64(bot: Bot, user_id: int) -> Optional[str]
                             logger.error(f"Downloaded file is empty")
                             return None
                         
-                        # Определяем MIME тип по расширению файла
-                        mime_type = "image/jpeg"  # По умолчанию
-                        if file_path.endswith('.png'):
-                            mime_type = "image/png"
-                        elif file_path.endswith('.gif'):
-                            mime_type = "image/gif"
-                        elif file_path.endswith('.webp'):
-                            mime_type = "image/webp"
-                        elif file_path.endswith('.jpg') or file_path.endswith('.jpeg'):
-                            mime_type = "image/jpeg"
+                        # Валидация изображения через PIL
+                        try:
+                            image = Image.open(io.BytesIO(photo_bytes))
+                            # Проверяем, что это действительно изображение, пытаясь загрузить его
+                            image.verify()
+                            # verify() закрывает файл, поэтому нужно открыть заново для дальнейшего использования
+                            image = Image.open(io.BytesIO(photo_bytes))
+                            logger.debug(f"✅ Image validated: format={image.format}, size={image.size}, mode={image.mode}")
+                        except Exception as img_error:
+                            logger.error(f"❌ Invalid image file for user {user_id}: {img_error}")
+                            return None
                         
-                        # Конвертируем в base64
+                        # Проверяем Content-Type ответа от Telegram
+                        content_type = download_response.headers.get('Content-Type', '')
+                        if content_type and not content_type.startswith('image/'):
+                            logger.warning(f"⚠️ Unexpected Content-Type: {content_type}, but image validation passed")
+                        
+                        # Конвертируем в base64 (только чистый base64, без data URI префикса)
                         photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
                         
-                        # Формируем data URI
-                        data_uri = f"data:{mime_type};base64,{photo_base64}"
-                        
                         logger.info(f"✅ Successfully converted user {user_id} photo to base64, size: {len(photo_bytes)} bytes")
-                        return data_uri
+                        return photo_base64
         
     except Exception as e:
         logger.error(f"❌ Error getting user {user_id} profile photo: {e}", exc_info=True)
