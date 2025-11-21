@@ -44,14 +44,23 @@ async def run_scheduler():
                     logger.debug(f"[SCHEDULER] Завершение смен уже было запущено сегодня ({current_date})")
             
             # Ждем 60 секунд до следующей проверки
-            await asyncio.sleep(60)
+            # Используем asyncio.wait_for для возможности прерывания
+            try:
+                await asyncio.wait_for(asyncio.sleep(60), timeout=60.0)
+            except asyncio.TimeoutError:
+                # Это нормально, просто продолжаем цикл
+                pass
             
     except asyncio.CancelledError:
-        logger.info("[SCHEDULER] Планировщик остановлен")
+        logger.info("[SCHEDULER] Планировщик остановлен (отменен)")
         raise
     except Exception as e:
         logger.error(f"[SCHEDULER] ❌ Критическая ошибка в планировщике: {e}", exc_info=True)
         raise
     finally:
-        await bot.session.close()
+        try:
+            await bot.session.close()
+            logger.debug("[SCHEDULER] Сессия бота закрыта")
+        except Exception as e:
+            logger.warning(f"[SCHEDULER] Ошибка при закрытии сессии бота: {e}")
 

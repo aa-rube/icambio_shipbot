@@ -442,11 +442,26 @@ async def cmd_offline(message: Message, bot: Bot):
         logger.warning(f"[SHIFT] ⚠️ Пользователь {message.from_user.id} не является курьером, игнорируем команду /offline")
         return
     
+    # Проверяем, что курьер на смене
+    is_on_shift, shift_started_at = await check_shift_status(message.chat.id)
+    if not is_on_shift:
+        logger.info(f"[SHIFT] ⚠️ Курьер {message.from_user.id} не на смене, отправляем сообщение")
+        await message.answer("❌ Вы не на смене")
+        return
+    
     await end_shift_logic(message.chat.id, message.from_user.id, bot, message)
 
 @router.callback_query(F.data == "shift:end")
 async def cb_end_shift(call: CallbackQuery, bot: Bot):
     logger.info(f"[SHIFT] 🛑 Пользователь {call.from_user.id} завершает смену")
+    
+    # Проверяем, что курьер на смене
+    is_on_shift, shift_started_at = await check_shift_status(call.message.chat.id)
+    if not is_on_shift:
+        logger.info(f"[SHIFT] ⚠️ Курьер {call.from_user.id} не на смене, отправляем сообщение")
+        await call.answer("❌ Вы не на смене", show_alert=True)
+        return
+    
     await end_shift_logic(call.message.chat.id, call.from_user.id, bot, call)
 
 async def auto_end_all_shifts(bot: Bot):
