@@ -9,10 +9,12 @@ from utils.order_format import format_order_text
 from utils.test_orders import is_test_order
 from config import ORDER_LOCK_TTL, PHOTO_WAIT_TTL, TIMEZONE
 from db.models import utcnow_iso, get_status_history_update
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Tuple
+import logging
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 async def validate_order_for_action(
     external_id: str,
@@ -70,6 +72,79 @@ async def validate_order_for_action(
             return False, order, "Заказ назначен другому курьеру"
     
     return True, order, None
+
+async def validate_courier_shift_and_location(chat_id: int) -> Tuple[bool, Optional[str]]:
+    """
+    Проверяет условия для действий курьера с заказом:
+    - Курьер на смене
+    - Последнее гео было не позднее 15 минут назад
+    
+    Args:
+        chat_id: Chat ID курьера
+        
+    Returns:
+        Tuple[bool, Optional[str]]: 
+        - True если все условия выполнены, False если нет
+        - Сообщение с инструкцией если условия не выполнены, None если все ОК
+    """
+    # Импортируем функцию проверки смены
+    from handlers.shift import check_shift_status, get_shift_start_instruction
+    
+    # Проверяем статус смены
+    is_on_shift, shift_started_at = await check_shift_status(chat_id)
+    
+    if not is_on_shift:
+        logger.warning(f"[ORDERS] ⚠️ Курьер {chat_id} не на смене")
+        instruction = get_shift_start_instruction()
+        return False, f"❌ Вы не на смене\n\n{instruction}"
+    
+    # Получаем информацию о курьере и последнем гео
+    db = await get_db()
+    courier = await db.couriers.find_one({"tg_chat_id": chat_id})
+    
+    if not courier:
+        logger.warning(f"[ORDERS] ⚠️ Курьер {chat_id} не найден в БД")
+        instruction = get_shift_start_instruction()
+        return False, f"❌ Курьер не найден\n\n{instruction}"
+    
+    # Проверяем последнее гео
+    last_location = courier.get("last_location")
+    
+    if not last_location or not last_location.get("updated_at"):
+        logger.warning(f"[ORDERS] ⚠️ У курьера {chat_id} нет последнего гео")
+        instruction = get_shift_start_instruction()
+        return False, f"❌ Не найдена геолокация\n\n{instruction}"
+    
+    # Проверяем, что последнее гео было не позднее 15 минут назад
+    try:
+        last_geo_time_str = last_location.get("updated_at")
+        if last_geo_time_str.endswith('Z'):
+            last_geo_time = datetime.fromisoformat(last_geo_time_str.replace('Z', '+00:00'))
+        else:
+            last_geo_time = datetime.fromisoformat(last_geo_time_str)
+        
+        # Конвертируем в таймзону если нужно
+        if last_geo_time.tzinfo is None:
+            last_geo_time = last_geo_time.replace(tzinfo=TIMEZONE)
+        elif last_geo_time.tzinfo != TIMEZONE:
+            last_geo_time = last_geo_time.astimezone(TIMEZONE)
+        
+        now = datetime.now(TIMEZONE)
+        time_diff = now - last_geo_time
+        max_age = timedelta(minutes=15)
+        
+        if time_diff > max_age:
+            logger.warning(f"[ORDERS] ⚠️ Последнее гео курьера {chat_id} было {time_diff.total_seconds() / 60:.1f} минут назад (максимум 15 минут)")
+            instruction = get_shift_start_instruction()
+            return False, f"❌ Последнее гео было более 15 минут назад\n\n{instruction}"
+        
+        logger.debug(f"[ORDERS] ✅ Проверка пройдена для курьера {chat_id}: на смене, последнее гео {time_diff.total_seconds() / 60:.1f} минут назад")
+        return True, None
+        
+    except Exception as e:
+        logger.error(f"[ORDERS] ❌ Ошибка при проверке времени последнего гео для курьера {chat_id}: {e}", exc_info=True)
+        instruction = get_shift_start_instruction()
+        return False, f"❌ Ошибка проверки геолокации\n\n{instruction}"
 
 @router.message(F.text == "/orders")
 async def cmd_orders(message: Message):
@@ -233,6 +308,14 @@ async def cb_order_go(call: CallbackQuery, bot: Bot):
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
+        return
+    
+    # Проверяем смену и геолокацию курьера
+    is_valid_shift, shift_error = await validate_courier_shift_and_location(call.message.chat.id)
+    if not is_valid_shift:
+        logger.warning(f"[ORDERS] ⚠️ Проверка смены/гео не пройдена для заказа {external_id}: {shift_error}")
+        await call.message.answer(shift_error or "Необходимо быть на смене и иметь актуальное гео")
+        await call.answer("Проверьте смену и геолокацию", show_alert=True)
         return
     
     db = await get_db()
@@ -487,6 +570,14 @@ async def cb_order_check_payment(call: CallbackQuery, bot: Bot):
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
         return
     
+    # Проверяем смену и геолокацию курьера
+    is_valid_shift, shift_error = await validate_courier_shift_and_location(call.message.chat.id)
+    if not is_valid_shift:
+        logger.warning(f"[ORDERS] ⚠️ Проверка смены/гео не пройдена для заказа {external_id}: {shift_error}")
+        await call.message.answer(shift_error or "Необходимо быть на смене и иметь актуальное гео")
+        await call.answer("Проверьте смену и геолокацию", show_alert=True)
+        return
+    
     db = await get_db()
     
     # Проверка: если заказ тестовый (отрицательный external_id), автоматически устанавливаем оплату "PAID"
@@ -675,6 +766,14 @@ async def cb_order_done(call: CallbackQuery, bot: Bot):
         except:
             pass
         await call.answer(error_msg or "Действие невозможно", show_alert=True)
+        return
+    
+    # Проверяем смену и геолокацию курьера
+    is_valid_shift, shift_error = await validate_courier_shift_and_location(call.message.chat.id)
+    if not is_valid_shift:
+        logger.warning(f"[ORDERS] ⚠️ Проверка смены/гео не пройдена для заказа {external_id}: {shift_error}")
+        await call.message.answer(shift_error or "Необходимо быть на смене и иметь актуальное гео")
+        await call.answer("Проверьте смену и геолокацию", show_alert=True)
         return
     
     db = await get_db()

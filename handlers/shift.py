@@ -156,6 +156,17 @@ async def handle_location(message: Message, bot: Bot):
         logger.info(f"[SHIFT] ⏸️ Пользователь {message.from_user.id} отправил статичную локацию, игнорируем")
         return
     
+    # Проверяем минимальное время live_period (7ч 59мин = 28740 секунд)
+    MIN_LIVE_PERIOD = 7 * 60 * 60 + 59 * 60  # 7ч 59мин в секундах
+    if message.location.live_period < MIN_LIVE_PERIOD:
+        logger.warning(f"[SHIFT] ⚠️ Пользователь {message.from_user.id} отправил гео с live_period={message.location.live_period} секунд (минимум {MIN_LIVE_PERIOD})")
+        await message.answer(
+            f"❌ Время трансляции геолокации должно быть минимум 8 часов\n\n"
+            f"Текущее время: {message.location.live_period // 3600}ч {(message.location.live_period % 3600) // 60}мин\n\n"
+            f"{get_shift_start_instruction()}"
+        )
+        return
+    
     logger.info(f"[SHIFT] 🚚 Начало смены для пользователя {message.from_user.id}")
 
     try:
