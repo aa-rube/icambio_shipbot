@@ -8,6 +8,7 @@ from db.mongo import init_indexes
 from config import BOT_TOKEN, API_HOST, API_PORT
 import uvicorn
 from api_server import app
+from utils.scheduler import run_scheduler
 
 async def run_api_server():
     """Запускает FastAPI сервер"""
@@ -49,13 +50,14 @@ async def run_bot():
 
 async def main():
     logger = setup_logging(logging.INFO)
-    logger.info("[BOT] Starting bot and API server...")
+    logger.info("[BOT] Starting bot, API server and scheduler...")
     await init_indexes()
 
-    # Запускаем бота и API сервер параллельно
+    # Запускаем бота, API сервер и планировщик параллельно
     await asyncio.gather(
         run_bot(),
-        run_api_server()
+        run_api_server(),
+        run_scheduler()
     )
 
 if __name__ == "__main__":

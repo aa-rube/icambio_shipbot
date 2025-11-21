@@ -231,7 +231,7 @@ async def handle_location(message: Message, bot: Bot):
     except Exception as e:
         logger.error(f"[SHIFT] ❌ Ошибка в handle_location: {e}", exc_info=True)
 
-async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=None):
+async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=None, auto_mode: bool = False):
     """
     Общая логика завершения смены
     Может быть вызвана как из callback, так и из message handler
@@ -241,6 +241,7 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
         user_id: ID пользователя
         bot: Bot instance
         message_or_call: Message или CallbackQuery объект (для отправки ответа)
+        auto_mode: Если True, пропускает проверку незавершенных заказов и не отправляет уведомление менеджеру
     """
     db = await get_db()
     redis = get_redis()
@@ -259,20 +260,23 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
     # Сохраняем время начала смены для подсчета заказов
     shift_started_at = courier.get("shift_started_at")
     
-    # Check for unfinished orders
-    logger.debug(f"[SHIFT] 🔍 Проверка незавершенных заказов для chat_id: {chat_id}")
-    unfinished = await db.couriers_deliveries.count_documents({
-        "courier_tg_chat_id": chat_id,
-        "status": {"$in": ["waiting", "in_transit"]}
-    })
-    if unfinished > 0:
-        logger.warning(f"[SHIFT] ⚠️ Попытка завершить смену с {unfinished} незавершенными заказами")
-        if message_or_call:
-            if hasattr(message_or_call, 'answer'):  # CallbackQuery
-                await message_or_call.answer(f"Нельзя завершить смену! У вас {unfinished} незавершенных заказов", show_alert=True)
-            else:  # Message
-                await message_or_call.answer(f"❌ Нельзя завершить смену! У вас {unfinished} незавершенных заказов")
-        return False
+    # Check for unfinished orders (пропускаем в автоматическом режиме)
+    if not auto_mode:
+        logger.debug(f"[SHIFT] 🔍 Проверка незавершенных заказов для chat_id: {chat_id}")
+        unfinished = await db.couriers_deliveries.count_documents({
+            "courier_tg_chat_id": chat_id,
+            "status": {"$in": ["waiting", "in_transit"]}
+        })
+        if unfinished > 0:
+            logger.warning(f"[SHIFT] ⚠️ Попытка завершить смену с {unfinished} незавершенными заказами")
+            if message_or_call:
+                if hasattr(message_or_call, 'answer'):  # CallbackQuery
+                    await message_or_call.answer(f"Нельзя завершить смену! У вас {unfinished} незавершенных заказов", show_alert=True)
+                else:  # Message
+                    await message_or_call.answer(f"❌ Нельзя завершить смену! У вас {unfinished} незавершенных заказов")
+            return False
+    else:
+        logger.info(f"[SHIFT] 🤖 Автоматический режим: пропускаем проверку незавершенных заказов для chat_id: {chat_id}")
 
     # Подсчет заказов за смену
     orders_count = 0
@@ -368,8 +372,20 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
                 shift_message,
                 reply_markup=main_menu(is_on_shift=False)
             )
+    elif auto_mode:
+        # В автоматическом режиме отправляем сообщение курьеру напрямую
+        try:
+            await bot.send_message(
+                chat_id,
+                shift_message,
+                reply_markup=main_menu(is_on_shift=False)
+            )
+            logger.info(f"[SHIFT] ✅ Уведомление отправлено курьеру {chat_id} в автоматическом режиме")
+        except Exception as e:
+            logger.error(f"[SHIFT] ❌ Ошибка отправки уведомления курьеру {chat_id}: {e}", exc_info=True)
     
-    if MANAGER_CHAT_ID:
+    # Уведомление менеджеру (только если не автоматический режим)
+    if not auto_mode and MANAGER_CHAT_ID:
         notification_text = f"🔴 Курьер {courier['name']} завершил смену\nID: {chat_id}"
         logger.info(f"[SHIFT] 📤 Отправка уведомления менеджеру {MANAGER_CHAT_ID} о завершении смены")
         try:
@@ -399,3 +415,76 @@ async def cmd_offline(message: Message, bot: Bot):
 async def cb_end_shift(call: CallbackQuery, bot: Bot):
     logger.info(f"[SHIFT] 🛑 Пользователь {call.from_user.id} завершает смену")
     await end_shift_logic(call.message.chat.id, call.from_user.id, bot, call)
+
+async def auto_end_all_shifts(bot: Bot):
+    """
+    Автоматически завершает все активные смены курьеров
+    Вызывается планировщиком в 23:00
+    
+    Args:
+        bot: Bot instance для отправки уведомлений
+    """
+    logger.info("[SHIFT] 🤖 Начало автоматического завершения всех смен")
+    
+    db = await get_db()
+    
+    # Находим всех курьеров на смене
+    couriers_on_shift = await db.couriers.find({"is_on_shift": True}).to_list(1000)
+    
+    if not couriers_on_shift:
+        logger.info("[SHIFT] 🤖 Нет курьеров на смене для завершения")
+        return
+    
+    logger.info(f"[SHIFT] 🤖 Найдено {len(couriers_on_shift)} курьеров на смене")
+    
+    completed_shifts = []
+    failed_shifts = []
+    
+    # Завершаем смену для каждого курьера
+    for courier in couriers_on_shift:
+        chat_id = courier.get("tg_chat_id")
+        user_id = courier.get("tg_chat_id")  # Используем chat_id как user_id
+        courier_name = courier.get("name", "Неизвестный")
+        
+        try:
+            logger.info(f"[SHIFT] 🤖 Завершение смены для курьера {courier_name} (chat_id: {chat_id})")
+            success = await end_shift_logic(chat_id, user_id, bot, message_or_call=None, auto_mode=True)
+            
+            if success:
+                completed_shifts.append(courier_name)
+                logger.info(f"[SHIFT] ✅ Смена курьера {courier_name} успешно завершена")
+            else:
+                failed_shifts.append((courier_name, "Не удалось завершить смену"))
+                logger.warning(f"[SHIFT] ⚠️ Не удалось завершить смену для курьера {courier_name}")
+                
+        except Exception as e:
+            failed_shifts.append((courier_name, str(e)))
+            logger.error(f"[SHIFT] ❌ Ошибка при завершении смены для курьера {courier_name}: {e}", exc_info=True)
+    
+    # Отправляем сводку менеджеру
+    if MANAGER_CHAT_ID:
+        summary_parts = [
+            "📊 Сводка автоматического завершения смен (23:00)",
+            "",
+            f"✅ Успешно завершено: {len(completed_shifts)}"
+        ]
+        
+        if completed_shifts:
+            summary_parts.append("\nКурьеры:")
+            for name in completed_shifts:
+                summary_parts.append(f"  • {name}")
+        
+        if failed_shifts:
+            summary_parts.append(f"\n⚠️ Ошибки: {len(failed_shifts)}")
+            for name, error in failed_shifts:
+                summary_parts.append(f"  • {name}: {error[:50]}")
+        
+        summary_text = "\n".join(summary_parts)
+        
+        try:
+            await bot.send_message(MANAGER_CHAT_ID, summary_text)
+            logger.info(f"[SHIFT] ✅ Сводка отправлена менеджеру {MANAGER_CHAT_ID}")
+        except Exception as e:
+            logger.error(f"[SHIFT] ❌ Ошибка отправки сводки менеджеру: {e}", exc_info=True)
+    
+    logger.info(f"[SHIFT] 🤖 Автоматическое завершение смен завершено: успешно {len(completed_shifts)}, ошибок {len(failed_shifts)}")

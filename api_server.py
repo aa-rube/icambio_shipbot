@@ -628,6 +628,60 @@ async def get_courier_active_orders(
         )
     )
 
+@app.get("/api/admin/couriers/{chat_id}/orders/completed", response_model=ActiveOrdersResponse)
+async def get_courier_completed_orders(
+    chat_id: int,
+    page: int = Query(0, ge=0),
+    admin_user_id: int = verify_admin
+):
+    """
+    Закрытые заказы курьера.
+    Возвращает список закрытых заказов (done, cancelled) с пагинацией.
+    Фиксированный размер страницы: 50 заказов.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    PER_PAGE = 50  # Фиксированное значение
+    
+    logger.info(f"[API] 📦 Админ {admin_user_id} запрашивает закрытые заказы курьера {chat_id} (страница {page})")
+    
+    db = await get_db()
+    
+    # Получаем закрытые заказы курьера
+    all_orders = await db.couriers_deliveries.find({
+        "courier_tg_chat_id": chat_id,
+        "status": {"$in": ["done", "cancelled"]}
+    }).sort("updated_at", -1).to_list(10000)
+    
+    total = len(all_orders)
+    total_pages = (total + PER_PAGE - 1) // PER_PAGE if total > 0 else 1
+    page = max(0, min(page, total_pages - 1))  # Обработка пустых страниц
+    
+    start_idx = page * PER_PAGE
+    end_idx = start_idx + PER_PAGE
+    orders = all_orders[start_idx:end_idx]
+    
+    # Преобразуем ObjectId в строки для JSON
+    orders_json = []
+    for order in orders:
+        order_dict = dict(order)
+        if "_id" in order_dict:
+            order_dict["_id"] = str(order_dict["_id"])
+        if "assigned_to" in order_dict and order_dict["assigned_to"]:
+            order_dict["assigned_to"] = str(order_dict["assigned_to"])
+        orders_json.append(order_dict)
+    
+    return ActiveOrdersResponse(
+        orders=orders_json,
+        pagination=PaginationInfo(
+            page=page,
+            per_page=PER_PAGE,
+            total=total,
+            total_pages=total_pages
+        )
+    )
+
 @app.get("/api/admin/couriers/{chat_id}")
 async def get_courier_details(
     chat_id: int,
