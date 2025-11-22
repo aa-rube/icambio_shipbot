@@ -552,7 +552,8 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     else:
         logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
     
-    await call.message.answer("✅ Заказ выполнен. Оплата принята.")
+    address = updated_order.get("address", "")
+    await call.message.answer(f"✅ Заказ {external_id}, {address} выполнен.")
     await call.answer()
     
     # Уведомление менеджера только для реальных заказов (не тестовых)
@@ -874,7 +875,8 @@ async def cb_order_done(call: CallbackQuery, bot: Bot):
         else:
             logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
         
-        await call.message.answer("✅ Заказ выполнен.")
+        address = updated_order.get("address", "")
+        await call.message.answer(f"✅ Заказ {external_id}, {address} выполнен.")
         await call.answer()
         
         # Для заказов с client_ip редактируем сообщение, удаляя кнопку "Завершить Заказ"

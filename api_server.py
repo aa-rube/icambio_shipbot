@@ -807,7 +807,7 @@ async def complete_order(
     try:
         await bot.send_message(
             current_courier_chat_id,
-            f"✅ Заказ {external_id} выполнен\nАдрес: {address}"
+            f"✅ Заказ {external_id}, {address} выполнен."
         )
     except Exception as e:
         logger.warning(f"[API] ⚠️ Не удалось отправить сообщение курьеру {current_courier_chat_id}: {e}")
