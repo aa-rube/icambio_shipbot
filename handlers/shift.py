@@ -325,23 +325,34 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
     # Подсчет заказов за смену
     orders_count = 0
     complete_orders_count = 0
+    cancelled_orders_count = 0
     current_shift_id = courier.get("current_shift_id")
     
     if shift_started_at:
         try:
             logger.debug(f"[SHIFT] 📊 Подсчет заказов за смену с {shift_started_at}")
+
             # Общее количество заказов за смену
             orders_count = await db.couriers_deliveries.count_documents({
                 "courier_tg_chat_id": chat_id,
                 "created_at": {"$gte": shift_started_at}
             })
+
             # Количество завершенных заказов за смену
             complete_orders_count = await db.couriers_deliveries.count_documents({
                 "courier_tg_chat_id": chat_id,
                 "status": "done",
-                "created_at": {"$gte": shift_started_at}
+                "updated_at": {"$gte": shift_started_at}
             })
-            logger.info(f"[SHIFT] 📊 Заказов за смену: {orders_count}, завершено: {complete_orders_count}")
+
+            # Количество отмененных заказов за смену
+            cancelled_orders_count = await db.couriers_deliveries.count_documents({
+                "courier_tg_chat_id": chat_id,
+                "status": "cancelled",
+                "updated_at": {"$gte": shift_started_at}
+            })
+
+            logger.info(f"[SHIFT] 📊 Заказов за смену: {orders_count}, завершено: {complete_orders_count}, отмененно: {cancelled_orders_count}")
         except Exception as e:
             logger.warning(f"[SHIFT] ⚠️ Ошибка подсчета заказов за смену: {e}", exc_info=True)
 
@@ -399,6 +410,10 @@ async def end_shift_logic(chat_id: int, user_id: int, bot: Bot, message_or_call=
         f"💤 Смена завершена\n\n"
         f"📦 Заказов за смену: {orders_count}"
     )
+    
+    # Добавляем информацию об отмененных заказах только если они есть
+    if cancelled_orders_count > 0:
+        shift_message += f"\n❌ Отмененных заказов: {cancelled_orders_count}"
     
     # Отправка сообщения курьеру
     if message_or_call:
