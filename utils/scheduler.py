@@ -11,6 +11,23 @@ logger = logging.getLogger(__name__)
 # Флаг для предотвращения повторных запусков
 _last_run_date = None
 
+async def end_all_shifts_scheduled(bot: Bot):
+    """
+    Завершает все активные смены курьеров
+    Вызывается планировщиком в 23:00
+    
+    Args:
+        bot: Bot instance для отправки уведомлений
+    """
+    logger.info("[SCHEDULER] 🛑 Начало завершения всех смен")
+    
+    try:
+        await auto_end_all_shifts(bot)
+        logger.info("[SCHEDULER] ✅ Завершение всех смен выполнено")
+    except Exception as e:
+        logger.error(f"[SCHEDULER] ❌ Ошибка при завершении смен: {e}", exc_info=True)
+        raise
+
 async def cleanup_old_locations():
     """
     Удаляет все записи из коллекции location старше 7 дней
@@ -69,8 +86,7 @@ async def run_scheduler():
                     
                     # Завершение всех смен
                     try:
-                        await auto_end_all_shifts(bot)
-                        logger.info("[SCHEDULER] ✅ Завершение всех смен выполнено")
+                        await end_all_shifts_scheduled(bot)
                     except Exception as e:
                         logger.error(f"[SCHEDULER] ❌ Ошибка при завершении смен: {e}", exc_info=True)
                     
