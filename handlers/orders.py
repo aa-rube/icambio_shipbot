@@ -212,14 +212,25 @@ async def show_waiting_orders(chat_id: int, message: Message):
     
     found = False
     order_count = 0
+    # Получаем bot из message для удаления сообщений
+    bot = message.bot
+    
     async for order in cursor:
         found = True
         order_count += 1
         logger.info(f"[ORDERS] ✅ Найден ожидающий заказ #{order_count}: external_id={order.get('external_id')}, priority={order.get('priority')}")
         
+        # Удаляем старые сообщения этого заказа перед отправкой нового
+        from utils.order_messages import delete_order_messages_from_courier
+        await delete_order_messages_from_courier(bot, order)
+        
         text = format_order_text(order)
-        await message.answer(text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
+        sent_message = await message.answer(text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
         logger.debug(f"[ORDERS] 📤 Отправлен ожидающий заказ {order.get('external_id')} в chat_id {chat_id}")
+        
+        # Сохраняем message_id в заказе
+        from utils.order_messages import save_order_message_id
+        await save_order_message_id(order, sent_message.message_id)
     
     if not found:
         logger.info(f"[ORDERS] ⚠️ Ожидающих заказов не найдено для chat_id {chat_id}")
@@ -268,18 +279,29 @@ async def show_active_orders(chat_id: int, message: Message):
     
     found = False
     order_count = 0
+    # Получаем bot из message для удаления сообщений
+    bot = message.bot
+    
     async for order in cursor:
         found = True
         order_count += 1
         logger.info(f"[ORDERS] ✅ Найден активный заказ #{order_count}: external_id={order.get('external_id')}, status={order.get('status')}, priority={order.get('priority')}")
         
+        # Удаляем старые сообщения этого заказа перед отправкой нового
+        from utils.order_messages import delete_order_messages_from_courier
+        await delete_order_messages_from_courier(bot, order)
+        
         text = format_order_text(order)
         if order["status"] == "waiting":
-            await message.answer(text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
+            sent_message = await message.answer(text, parse_mode="HTML", reply_markup=new_order_kb(order["external_id"]))
             logger.debug(f"[ORDERS] 📤 Отправлен ожидающий заказ {order.get('external_id')} в chat_id {chat_id}")
         elif order["status"] == "in_transit":
-            await message.answer(text, parse_mode="HTML", reply_markup=in_transit_kb(order["external_id"], order))
+            sent_message = await message.answer(text, parse_mode="HTML", reply_markup=in_transit_kb(order["external_id"], order))
             logger.debug(f"[ORDERS] 📤 Отправлен заказ в пути {order.get('external_id')} в chat_id {chat_id}")
+        
+        # Сохраняем message_id в заказе
+        from utils.order_messages import save_order_message_id
+        await save_order_message_id(order, sent_message.message_id)
     
     if not found:
         logger.warning(f"[ORDERS] ⚠️ Активных заказов не найдено для chat_id {chat_id}. Всего заказов: {all_orders_count}, Заказов как int: {orders_as_int}")
@@ -799,6 +821,10 @@ async def cb_order_done(call: CallbackQuery, bot: Bot):
     # Фото требуется ТОЛЬКО для наличных заказов без client_ip
     is_cash_payment = order.get("is_cash_payment", False)
     requires_photo = is_cash_payment and not has_client_ip
+    
+    # Удаляем сообщения о заказе перед закрытием
+    from utils.order_messages import delete_order_messages_from_courier
+    await delete_order_messages_from_courier(bot, order)
     
     if requires_photo:
         # Для наличных заказов без client_ip просим фото подтверждения доставки

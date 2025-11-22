@@ -3,6 +3,12 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from config import TIMEZONE
 
+# --- Order Document Structure ---
+# Заказ в MongoDB (коллекция couriers_deliveries) содержит следующие поля:
+# - courier_message_ids: List[int] = [] - массив message_id сообщений с заказом, 
+#   отправленных курьеру в Telegram. Используется для последующего удаления 
+#   всех сообщений о заказе из чата курьера.
+
 # --- Pydantic schemas for FastAPI input ---
 class IncomingOrder(BaseModel):
     courier_tg_chat_id: int = Field(..., description="Telegram chat ID курьера")

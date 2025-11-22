@@ -1497,6 +1497,10 @@ async def cb_order_complete(call: CallbackQuery, bot: Bot):
     current_courier_chat_id = order.get("courier_tg_chat_id")
     address = order.get("address", "")
     
+    # Удаляем сообщения о заказе перед закрытием
+    from utils.order_messages import delete_order_messages_from_courier
+    await delete_order_messages_from_courier(bot, order)
+    
     # Обновляем заказ: статус done, записываем что закрыл администратор
     from db.models import utcnow_iso
     await db.couriers_deliveries.update_one(
@@ -1694,6 +1698,11 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
         original_courier_chat_id = old_courier_chat_id
     address = order.get("address", "")
     
+    # Удаляем сообщения у старого курьера перед переназначением
+    if old_courier_chat_id != new_courier_chat_id:
+        from utils.order_messages import delete_order_messages_from_courier
+        await delete_order_messages_from_courier(bot, order)
+    
     # Обновляем заказ в БД
     from db.models import utcnow_iso
     await db.couriers_deliveries.update_one(
@@ -1732,12 +1741,15 @@ async def cb_assign_courier(call: CallbackQuery, bot: Bot):
         text = format_order_text(order)
         from keyboards.orders_kb import new_order_kb, in_transit_kb
         kb = new_order_kb(external_id) if order.get("status") == "waiting" else in_transit_kb(external_id, order)
-        await bot.send_message(
+        message = await bot.send_message(
             new_courier_chat_id,
             text,
             parse_mode="HTML",
             reply_markup=kb
         )
+        # Сохраняем message_id в заказе
+        from utils.order_messages import save_order_message_id
+        await save_order_message_id(order, message.message_id)
     except Exception as e:
         logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение новому курьеру {new_courier_chat_id}: {e}")
     
@@ -1849,6 +1861,10 @@ async def cb_transfer_orders(call: CallbackQuery, bot: Bot):
     for order in active_orders:
         external_id = order.get("external_id")
         try:
+            # Удаляем сообщения у старого курьера перед передачей
+            from utils.order_messages import delete_order_messages_from_courier
+            await delete_order_messages_from_courier(bot, order)
+            
             # Обновляем в БД
             await db.couriers_deliveries.update_one(
                 {"external_id": external_id},
@@ -1880,14 +1896,22 @@ async def cb_transfer_orders(call: CallbackQuery, bot: Bot):
         
         for order in active_orders:
             try:
-                text = format_order_text(order)
-                kb = new_order_kb(order["external_id"]) if order.get("status") == "waiting" else in_transit_kb(order["external_id"], order)
-                await bot.send_message(
+                # Получаем актуальные данные заказа из БД
+                updated_order = await db.couriers_deliveries.find_one({"external_id": order.get("external_id")})
+                if not updated_order:
+                    continue
+                    
+                text = format_order_text(updated_order)
+                kb = new_order_kb(updated_order["external_id"]) if updated_order.get("status") == "waiting" else in_transit_kb(updated_order["external_id"], updated_order)
+                message = await bot.send_message(
                     new_courier_chat_id,
                     text,
                     parse_mode="HTML",
                     reply_markup=kb
                 )
+                # Сохраняем message_id в заказе
+                from utils.order_messages import save_order_message_id
+                await save_order_message_id(updated_order, message.message_id)
             except Exception as e:
                 logger.warning(f"[ADMIN] ⚠️ Не удалось отправить сообщение новому курьеру {new_courier_chat_id} о заказе {order.get('external_id')}: {e}")
     except Exception as e:
