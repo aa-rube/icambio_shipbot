@@ -545,3 +545,41 @@ async def update_order_courier(external_id: str, courier_tg_chat_id: str) -> boo
         logger.error(f"Error updating order {external_id} courier in Odoo: {e}", exc_info=True)
         return False
 
+async def update_lead_payment_status(lead_id: int, payment_status: str = "paid") -> bool:
+    """
+    Обновляет статус оплаты лида в Odoo
+    
+    Args:
+        lead_id: ID лида в Odoo
+        payment_status: Новый статус оплаты (по умолчанию "paid")
+        
+    Returns:
+        True если успешно обновлено, False в противном случае
+    """
+    try:
+        # Преобразуем lead_id в int, если это строка
+        if isinstance(lead_id, str):
+            try:
+                lead_id = int(lead_id)
+            except ValueError:
+                logger.warning(f"Invalid lead_id format (not a number): {lead_id}")
+                return False
+        
+        # Обновляем статус оплаты лида в Odoo
+        result = await odoo_call(
+            "call",
+            "crm.lead",
+            "write",
+            [[lead_id], {"payment_status": payment_status}]
+        )
+        
+        if result:
+            logger.info(f"Lead {lead_id} payment status updated to {payment_status} in Odoo")
+            return True
+        else:
+            logger.warning(f"Failed to update lead {lead_id} payment status in Odoo")
+            return False
+    except Exception as e:
+        logger.error(f"Error updating lead {lead_id} payment status in Odoo: {e}", exc_info=True)
+        return False
+

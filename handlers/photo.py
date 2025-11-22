@@ -64,82 +64,11 @@ async def handle_photo(message: Message, bot: Bot):
         await redis.delete(f"courier:photo_wait:{chat_id}")
         return
 
-    # Фото для закрытия заказа требуется ТОЛЬКО для наличных заказов без client_ip
-    is_cash_payment = order.get("is_cash_payment", False)
-    has_client_ip = bool(order.get("client_ip"))
-    
-    if not (is_cash_payment and not has_client_ip):
-        logger.warning(f"[PHOTO] ⚠️ Фото не требуется для закрытия заказа {external_id} (is_cash_payment={is_cash_payment}, has_client_ip={has_client_ip})")
-        await message.answer("❌ Фото не требуется для закрытия этого заказа. Заказ должен быть закрыт автоматически.")
-        await redis.delete(f"courier:photo_wait:{chat_id}")
-        return
-
-    # Проверяем статус оплаты перед завершением заказа
-    # Исключение: заказы с client_ip могут быть завершены без проверки оплаты
-    payment_status = order.get("payment_status")
-    
-    if payment_status == "NOT_PAID" and not has_client_ip:
-        logger.warning(f"[PHOTO] ⚠️ Попытка завершить заказ {external_id} без оплаты")
-        await message.answer("❌ Заказ не оплачен. Свяжитесь с менеджером для уточнения.")
-        await redis.delete(f"courier:photo_wait:{chat_id}")
-        return
-
-    photo = message.photo[-1]  # largest size
-    file_id = photo.file_id
-
-    # Для наличных заказов без client_ip устанавливаем статус оплаты в PAID при закрытии
-    # Определяем, нужно ли обновлять payment_status
-    new_payment_status = "PAID" if (is_cash_payment and not has_client_ip) else None
-    status_history_update = get_status_history_update(order, new_status="done", new_payment_status=new_payment_status)
-    
-    update_data = {
-        "$set": {"status": "done", "updated_at": utcnow_iso(), **status_history_update},
-        "$push": {"photos": {"file_id": file_id, "uploaded_at": utcnow_iso()}}
-    }
-    
-    # Если это наличный заказ без client_ip, устанавливаем payment_status в PAID
-    if is_cash_payment and not has_client_ip:
-        update_data["$set"]["payment_status"] = "PAID"
-        logger.debug(f"[PHOTO] 💰 Установка payment_status=PAID для наличного заказа {external_id}")
-
-    await db.couriers_deliveries.update_one(
-        {"external_id": external_id},
-        update_data
-    )
+    # Фото доставки больше не требуется для завершения заказов без client_ip
+    # Оплата устанавливается при клике "Завершить заказ" после принятия оплаты
+    # Этот блок кода оставлен для обратной совместимости, но не должен выполняться
+    # в нормальном флоу, так как мы убрали запрос фото доставки
+    logger.warning(f"[PHOTO] ⚠️ Получено фото доставки для заказа {external_id}, но фото больше не требуется для завершения заказов")
+    await message.answer("❌ Фото доставки больше не требуется. Используйте кнопку 'Завершить заказ' для завершения заказа.")
     await redis.delete(f"courier:photo_wait:{chat_id}")
-
-    # Получаем обновленный заказ для webhook
-    order = await db.couriers_deliveries.find_one({"external_id": external_id})
-
-    from db.models import Action
-    await Action.log(db, message.from_user.id, "photo_sent", order_id=external_id, details={"file_id": file_id})
-    logger.info(f"User {message.from_user.id} completed order {external_id} with photo")
-
-    # Проверка: если заказ тестовый (отрицательный external_id), не отправляем webhook и уведомления
-    is_test = is_test_order(external_id)
-    
-    # Отправка webhook только для реальных заказов (не тестовых)
-    if not is_test:
-        from utils.webhooks import send_webhook, prepare_order_data
-        order_data = await prepare_order_data(db, order)
-        webhook_data = {
-            **order_data,
-            "timestamp": utcnow_iso()
-        }
-        await send_webhook("order_completed", webhook_data)
-    else:
-        logger.info(f"[PHOTO] 🧪 Тестовый заказ {external_id} - webhook не отправляется")
-
-    await message.answer("✅ Заказ выполнен. Фото сохранено.")
-
-    # Уведомление менеджера только для реальных заказов (не тестовых)
-    if not is_test:
-        courier = await db.couriers.find_one({"tg_chat_id": chat_id})
-        if courier:
-            await notify_manager(bot, courier, f"📦 Курьер {courier['name']} завершил заказ {external_id}")
-    else:
-        logger.info(f"[PHOTO] 🧪 Тестовый заказ {external_id} - уведомление менеджеру не отправляется")
-    
-    # Показываем список активных заказов (waiting и in_transit)
-    from handlers.orders import show_active_orders
-    await show_active_orders(chat_id, message)
+    return

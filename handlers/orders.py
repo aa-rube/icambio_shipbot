@@ -499,29 +499,27 @@ async def cb_order_finish_after_payment(call: CallbackQuery, bot: Bot):
     if is_test:
         logger.info(f"[ORDERS] 🧪 Тестовый заказ {external_id} - автоматически устанавливаем оплату PAID")
     
-    # Проверяем наличие client_ip
-    has_client_ip = bool(order.get("client_ip"))
-    
     # Удаляем флаг ожидания фотографий оплаты
     logger.debug(f"[ORDERS] 🗑️ Удаление флага ожидания фото оплаты для chat_id {call.message.chat.id}")
     await redis.delete(f"courier:payment_photo_wait:{call.message.chat.id}")
     
-    # Для наличных заказов без client_ip требуется фото доставки перед закрытием
-    if not has_client_ip:
-        # Просим фото подтверждения доставки
-        logger.debug(f"[ORDERS] ⏳ Установка флага ожидания фото доставки для chat_id {call.message.chat.id}")
-        await redis.setex(f"courier:photo_wait:{call.message.chat.id}", PHOTO_WAIT_TTL, external_id)
-        
-        from db.models import Action
-        await Action.log(db, call.from_user.id, "payment_accepted", order_id=external_id, details={"waiting_delivery_photo": True})
-        logger.info(f"[ORDERS] 💰 Оплата принята для заказа {external_id}, ожидается фото доставки")
-        
-        await call.message.answer("📸 Пришли фото подтверждение доставки (чек или доставка)")
-        await call.answer()
-        return
+    # Обновляем статус оплаты в Odoo (только для реальных заказов)
+    if not is_test:
+        try:
+            lead_id = int(external_id)
+            from utils.odoo import update_lead_payment_status
+            odoo_updated = await update_lead_payment_status(lead_id, "paid")
+            if odoo_updated:
+                logger.info(f"[ORDERS] ✅ Статус оплаты обновлен в Odoo для заказа {external_id}")
+            else:
+                logger.warning(f"[ORDERS] ⚠️ Не удалось обновить статус оплаты в Odoo для заказа {external_id}")
+        except ValueError:
+            logger.warning(f"[ORDERS] ⚠️ external_id {external_id} не является числом, пропускаем обновление в Odoo")
+        except Exception as e:
+            logger.error(f"[ORDERS] ❌ Ошибка при обновлении статуса оплаты в Odoo для заказа {external_id}: {e}", exc_info=True)
     
-    # Для наличных заказов с client_ip закрываем сразу без фото
-    logger.debug(f"[ORDERS] 💾 Закрытие заказа {external_id} после оплаты наличными (с client_ip)")
+    # Завершаем заказ сразу без запроса фото доставки
+    logger.debug(f"[ORDERS] 💾 Закрытие заказа {external_id} после оплаты наличными")
     status_history_update = get_status_history_update(order, new_status="done", new_payment_status="PAID")
     await db.couriers_deliveries.update_one(
         {"external_id": external_id},
@@ -806,9 +804,13 @@ async def cb_order_done(call: CallbackQuery, bot: Bot):
     # Проверяем наличие client_ip - для таких заказов разрешаем завершение даже при NOT_PAID
     has_client_ip = bool(order.get("client_ip"))
     
+    # Проверяем статус оплаты
+    payment_status = order.get("payment_status")
+    is_cash_payment = order.get("is_cash_payment", False)
+    
     # Если статус оплаты "не оплачен", не позволяем завершить заказ
     # Исключение: заказы с client_ip могут быть завершены без проверки оплаты
-    if order.get("payment_status") == "NOT_PAID" and not has_client_ip:
+    if payment_status == "NOT_PAID" and not has_client_ip:
         if is_test:
             logger.warning(f"[ORDERS] ⚠️ Тестовый заказ {external_id} - оплата не подтверждена, нужно проверить оплату")
             await call.answer("Сначала проверьте оплату (тестовый заказ)", show_alert=True)
@@ -817,10 +819,9 @@ async def cb_order_done(call: CallbackQuery, bot: Bot):
             await call.answer("Сначала проверьте оплату", show_alert=True)
         return
     
-    # Проверяем, требуется ли фото для закрытия заказа
-    # Фото требуется ТОЛЬКО для наличных заказов без client_ip
-    is_cash_payment = order.get("is_cash_payment", False)
-    requires_photo = is_cash_payment and not has_client_ip
+    # Если оплата подтверждена (PAID), завершаем без фото независимо от наличия client_ip
+    # Фото больше не требуется для завершения заказов без client_ip, если оплата подтверждена
+    requires_photo = False
     
     # Удаляем сообщения о заказе перед закрытием
     from utils.order_messages import delete_order_messages_from_courier
